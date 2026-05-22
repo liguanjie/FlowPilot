@@ -9469,6 +9469,7 @@ function isGpcCheckoutRestartRequiredFailure(error) {
 function isPlusCheckoutRestartStep(step, stepExecutionKey = '', state = {}) {
   const normalizedKey = String(stepExecutionKey || '').trim();
   return normalizedKey === 'plus-checkout-create'
+    || normalizedKey === 'plus-checkout-open'
     || normalizedKey === 'plus-checkout-billing'
     || normalizedKey === 'gopay-subscription-confirm';
 }
@@ -9730,6 +9731,7 @@ function getDownstreamStateResets(step, state = {}) {
     'fill-profile',
     'wait-registration-success',
     'plus-checkout-create',
+    'plus-checkout-open',
   ].includes(normalizedStepKey);
   const isBillingNode = normalizedStepKey === 'plus-checkout-billing';
   const isApprovalNode = normalizedStepKey === 'paypal-approve'
@@ -10834,6 +10836,7 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'fetch-signup-code',
   'wait-registration-success',
   'plus-checkout-create',
+  'plus-checkout-open',
   'paypal-hosted-openai-checkout',
   'paypal-hosted-email',
   'paypal-hosted-card',
@@ -11951,6 +11954,7 @@ const AUTO_RUN_NODE_DELAYS = Object.freeze({
   'fill-profile': 0,
   'wait-registration-success': 3000,
   'plus-checkout-create': 3000,
+  'plus-checkout-open': 2000,
   'paypal-hosted-openai-checkout': 2000,
   'paypal-hosted-email': 2000,
   'paypal-hosted-card': 2000,
@@ -13972,6 +13976,7 @@ const stepExecutorsByKey = {
   'fill-profile': (state) => step5Executor.executeStep5(state),
   'wait-registration-success': (state) => step6Executor.executeStep6(state),
   'plus-checkout-create': (state) => plusCheckoutCreateExecutor.executePlusCheckoutCreate(state),
+  'plus-checkout-open': (state) => plusCheckoutCreateExecutor.executePlusCheckoutOpen(state),
   'paypal-hosted-openai-checkout': (state) => plusCheckoutCreateExecutor.executePayPalHostedOpenAiCheckout(state),
   'paypal-hosted-email': (state) => plusCheckoutCreateExecutor.executePayPalHostedEmail(state),
   'paypal-hosted-card': (state) => plusCheckoutCreateExecutor.executePayPalHostedCard(state),

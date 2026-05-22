@@ -308,6 +308,7 @@
       "sourceId": "plus-checkout",
       "commands": [
         "plus-checkout-create",
+        "plus-checkout-open",
         "paypal-hosted-openai-checkout",
         "plus-checkout-billing",
         "plus-checkout-return"

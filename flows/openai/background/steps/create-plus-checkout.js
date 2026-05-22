@@ -720,13 +720,14 @@
       return String(result?.checkoutUrl || '').trim();
     }
 
-    async function executeHostedCheckoutCreate(tabId, state = {}, result = {}) {
+    async function executeHostedCheckoutCreate(tabId, state = {}, result = {}, options = {}) {
+      const completionNodeId = String(options?.completionNodeId || 'plus-checkout-create').trim() || 'plus-checkout-create';
       const targetCheckoutUrl = resolveCheckoutTargetUrl(result, PLUS_PAYMENT_METHOD_PAYPAL_HOSTED);
       if (!targetCheckoutUrl) {
         throw new Error('步骤 6：PayPal 无卡直绑未返回可用的订阅链接。');
       }
 
-      await addLog('步骤 6：PayPal 无卡直绑链接已创建，正在打开并提交 OpenAI Checkout 页面...', 'ok');
+      await addLog('Step 8: Opening saved PayPal payment URL.', 'ok');
       await chrome.tabs.update(tabId, { url: targetCheckoutUrl, active: true });
       await waitForTabCompleteUntilStopped(tabId);
 
@@ -762,13 +763,36 @@
 
       await addLog(`步骤 6：PayPal 无卡直绑已提交 OpenAI Checkout（${result.country || 'US'} ${result.currency || 'USD'}），准备进入 PayPal 邮箱页。`, 'info');
 
-      await completeNodeFromBackground('plus-checkout-create', {
+      await completeNodeFromBackground(completionNodeId, {
         plusCheckoutCountry: result.country || 'US',
         plusCheckoutCurrency: result.currency || 'USD',
         plusCheckoutSource: PLUS_PAYMENT_METHOD_PAYPAL_HOSTED,
         plusCheckoutUrl: completedUrl,
         plusReturnUrl: isAlreadySuccessful ? completedUrl : '',
         plusHostedCheckoutCompleted: isAlreadySuccessful,
+      });
+    }
+
+    async function executePlusCheckoutOpen(state = {}) {
+      const targetCheckoutUrl = String(state?.plusCheckoutUrl || '').trim();
+      if (!targetCheckoutUrl) {
+        throw new Error('步骤 8：缺少 PayPal 支付长链接，请先执行“创建 Plus Checkout”。');
+      }
+
+      const storedTabId = Number(state?.plusCheckoutTabId) || 0;
+      const storedTab = await getTabById(storedTabId);
+      let tabId = Number(storedTab?.id) || 0;
+      if (!tabId) {
+        tabId = await openFreshChatGptTabForCheckoutCreate();
+      }
+
+      await executeHostedCheckoutCreate(tabId, state, {
+        preferredCheckoutUrl: targetCheckoutUrl,
+        checkoutUrl: targetCheckoutUrl,
+        country: state?.plusCheckoutCountry || 'US',
+        currency: state?.plusCheckoutCurrency || 'USD',
+      }, {
+        completionNodeId: 'plus-checkout-open',
       });
     }
 
@@ -1417,7 +1441,23 @@
       }
 
       if (paymentMethod === PLUS_PAYMENT_METHOD_PAYPAL_HOSTED) {
-        await executeHostedCheckoutCreate(tabId, state, result);
+        await setState({
+          plusCheckoutTabId: tabId,
+          plusCheckoutUrl: targetCheckoutUrl,
+          plusCheckoutCountry: result.country || 'US',
+          plusCheckoutCurrency: result.currency || 'USD',
+          plusCheckoutSource: PLUS_PAYMENT_METHOD_PAYPAL_HOSTED,
+          plusReturnUrl: '',
+          plusHostedCheckoutCompleted: false,
+        });
+        await addLog('Step 7: PayPal payment URL has been created and saved; ready to open it.', 'ok');
+        await completeNodeFromBackground('plus-checkout-create', {
+          plusCheckoutTabId: tabId,
+          plusCheckoutUrl: targetCheckoutUrl,
+          plusCheckoutCountry: result.country || 'US',
+          plusCheckoutCurrency: result.currency || 'USD',
+          plusCheckoutSource: PLUS_PAYMENT_METHOD_PAYPAL_HOSTED,
+        });
         return;
       }
 
@@ -1449,6 +1489,7 @@
 
     return {
       executePlusCheckoutCreate,
+      executePlusCheckoutOpen,
       executePayPalHostedOpenAiCheckout,
       executePayPalHostedEmail,
       executePayPalHostedCard,

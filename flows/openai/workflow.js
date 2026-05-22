@@ -1176,6 +1176,16 @@
     {
       "id": 7,
       "order": 70,
+      "key": "plus-checkout-open",
+      "title": "打开 PayPal 支付长链接",
+      "sourceId": "plus-checkout",
+      "driverId": "flows/openai/content/plus-checkout",
+      "command": "plus-checkout-open",
+      "flowId": "openai"
+    },
+    {
+      "id": 7,
+      "order": 70,
       "key": "paypal-hosted-email",
       "title": "无卡直绑填写 PayPal 邮箱",
       "sourceId": "paypal-flow",
@@ -1320,6 +1330,16 @@
     {
       "id": 7,
       "order": 70,
+      "key": "plus-checkout-open",
+      "title": "打开 PayPal 支付长链接",
+      "sourceId": "plus-checkout",
+      "driverId": "flows/openai/content/plus-checkout",
+      "command": "plus-checkout-open",
+      "flowId": "openai"
+    },
+    {
+      "id": 7,
+      "order": 70,
       "key": "paypal-hosted-email",
       "title": "无卡直绑填写 PayPal 邮箱",
       "sourceId": "paypal-flow",
@@ -1433,6 +1453,16 @@
     {
       "id": 7,
       "order": 70,
+      "key": "plus-checkout-open",
+      "title": "打开 PayPal 支付长链接",
+      "sourceId": "plus-checkout",
+      "driverId": "flows/openai/content/plus-checkout",
+      "command": "plus-checkout-open",
+      "flowId": "openai"
+    },
+    {
+      "id": 7,
+      "order": 70,
       "key": "paypal-hosted-email",
       "title": "无卡直绑填写 PayPal 邮箱",
       "sourceId": "paypal-flow",
@@ -1541,6 +1571,16 @@
       "sourceId": "plus-checkout",
       "driverId": "flows/openai/content/plus-checkout",
       "command": "plus-checkout-create",
+      "flowId": "openai"
+    },
+    {
+      "id": 7,
+      "order": 70,
+      "key": "plus-checkout-open",
+      "title": "打开 PayPal 支付长链接",
+      "sourceId": "plus-checkout",
+      "driverId": "flows/openai/content/plus-checkout",
+      "command": "plus-checkout-open",
       "flowId": "openai"
     },
     {
@@ -1706,6 +1746,16 @@
       "sourceId": "plus-checkout",
       "driverId": "flows/openai/content/plus-checkout",
       "command": "plus-checkout-create",
+      "flowId": "openai"
+    },
+    {
+      "id": 7,
+      "order": 70,
+      "key": "plus-checkout-open",
+      "title": "打开 PayPal 支付长链接",
+      "sourceId": "plus-checkout",
+      "driverId": "flows/openai/content/plus-checkout",
+      "command": "plus-checkout-open",
       "flowId": "openai"
     },
     {
@@ -3018,6 +3068,7 @@
 
   const PLUS_PAYMENT_CHAIN_STEP_KEYS = Object.freeze([
     'plus-checkout-create',
+    'plus-checkout-open',
     'plus-checkout-billing',
     'paypal-approve',
     'plus-checkout-return',

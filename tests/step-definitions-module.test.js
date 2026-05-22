@@ -223,6 +223,7 @@ test('step definitions module exposes ordered normal and Plus step metadata', ()
       'fill-profile',
       'wait-registration-success',
       'plus-checkout-create',
+      'plus-checkout-open',
       'paypal-hosted-email',
       'paypal-hosted-card',
       'paypal-hosted-create-account',
@@ -236,11 +237,11 @@ test('step definitions module exposes ordered normal and Plus step metadata', ()
   assert.equal(hostedSteps.some((step) => step.key === 'plus-checkout-billing'), false);
   assert.equal(hostedSteps.some((step) => step.key === 'paypal-approve'), false);
   assert.equal(hostedSteps.some((step) => step.key === 'plus-checkout-return'), false);
-  assert.equal(hostedSteps.some((step) => step.key === 'paypal-hosted-openai-checkout'), false);
   assert.equal(hostedSteps.some((step) => step.key === 'paypal-hosted-verification'), false);
+  assert.equal(hostedSteps.find((step) => step.key === 'plus-checkout-open')?.title, '打开 PayPal 支付长链接');
   assert.equal(hostedSteps.find((step) => step.key === 'paypal-hosted-card')?.title, '无卡直绑填写 PayPal 资料');
-  assert.deepStrictEqual(api.getStepIds({ plusModeEnabled: true, plusPaymentMethod: 'paypal-hosted' }), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-  assert.equal(api.getLastStepId({ plusModeEnabled: true, plusPaymentMethod: 'paypal-hosted' }), 15);
+  assert.deepStrictEqual(api.getStepIds({ plusModeEnabled: true, plusPaymentMethod: 'paypal-hosted' }), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.equal(api.getLastStepId({ plusModeEnabled: true, plusPaymentMethod: 'paypal-hosted' }), 16);
 
   assert.deepStrictEqual(
     goPaySteps.map((step) => step.key),
@@ -294,6 +295,7 @@ test('Plus no-payment mode removes only payment chain nodes', () => {
   const api = new Function('self', `${readStepDefinitionsBundle()}; return self.MultiPageStepDefinitions;`)(globalScope);
   const paymentChainKeys = [
     'plus-checkout-create',
+    'plus-checkout-open',
     'plus-checkout-billing',
     'paypal-approve',
     'plus-checkout-return',
@@ -429,7 +431,7 @@ test('Plus session strategy swaps the OAuth tail for a single SUB2API import nod
         plusAccountAccessStrategy: 'sub2api_codex_session',
       },
       previousNodeId: 'paypal-hosted-review',
-      expectedStepIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      expectedStepIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     },
     {
       label: 'gopay',
@@ -520,7 +522,7 @@ test('Plus session strategy swaps the OAuth tail for a single CPA import node', 
         plusAccountAccessStrategy: 'cpa_codex_session',
       },
       previousNodeId: 'paypal-hosted-review',
-      expectedStepIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      expectedStepIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     },
     {
       label: 'gopay',
