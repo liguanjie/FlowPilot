@@ -73,6 +73,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   accountRunHistoryTextEnabled: false,
   cloudflareTempEmailLookupMode: 'receive-mailbox',
   cloudflareTempEmailUseRandomSubdomain: false,
+  cloudflareTempEmailCustomSubdomain: '',
   cloudflareTempEmailDomain: '',
   cloudflareTempEmailDomains: [],
 };
@@ -121,17 +122,20 @@ return {
   `)();
 
   assert.equal(api.normalizePersistentSettingValue('cloudflareTempEmailUseRandomSubdomain', 1), true);
+  assert.equal(api.normalizePersistentSettingValue('cloudflareTempEmailCustomSubdomain', ' MySub '), 'mysub');
   assert.equal(api.normalizePersistentSettingValue('cloudflareTempEmailLookupMode', 'registration-email'), 'registration-email');
   assert.equal(api.normalizePersistentSettingValue('cloudflareTempEmailLookupMode', 'bad'), 'receive-mailbox');
 
   const payload = api.buildPersistentSettingsPayload({
     cloudflareTempEmailLookupMode: 'registration-email',
     cloudflareTempEmailUseRandomSubdomain: true,
+    cloudflareTempEmailCustomSubdomain: 'MySub',
     cloudflareTempEmailDomain: 'mail.example.com',
     cloudflareTempEmailDomains: ['mail.example.com', 'alt.example.com'],
   });
   assert.equal(payload.cloudflareTempEmailLookupMode, 'registration-email');
   assert.equal(payload.cloudflareTempEmailUseRandomSubdomain, true);
+  assert.equal(payload.cloudflareTempEmailCustomSubdomain, 'mysub');
   assert.equal(payload.cloudflareTempEmailDomain, 'mail.example.com');
   assert.deepEqual(payload.cloudflareTempEmailDomains, ['mail.example.com', 'alt.example.com']);
 
@@ -142,6 +146,7 @@ return {
     cloudflareTempEmailLookupMode: 'registration-email',
     cloudflareTempEmailReceiveMailbox: 'Forward@Example.com',
     cloudflareTempEmailUseRandomSubdomain: true,
+    cloudflareTempEmailCustomSubdomain: 'MySub',
     cloudflareTempEmailDomain: 'mail.example.com',
     cloudflareTempEmailDomains: ['mail.example.com'],
   });
@@ -152,6 +157,7 @@ return {
     lookupMode: 'registration-email',
     receiveMailbox: 'forward@example.com',
     useRandomSubdomain: true,
+    customSubdomain: 'mysub',
     domain: 'mail.example.com',
     domains: ['mail.example.com'],
   });

@@ -1398,6 +1398,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   cloudflareTempEmailLookupMode: DEFAULT_CLOUDFLARE_TEMP_EMAIL_LOOKUP_MODE,
   cloudflareTempEmailReceiveMailbox: '',
   cloudflareTempEmailUseRandomSubdomain: false,
+  cloudflareTempEmailCustomSubdomain: '',
   cloudflareTempEmailDomain: '',
   cloudflareTempEmailDomains: [],
   cloudMailBaseUrl: '',
@@ -2924,6 +2925,7 @@ function getCloudflareTempEmailConfig(state = {}) {
     lookupMode: normalizeCloudflareTempEmailLookupMode(state.cloudflareTempEmailLookupMode),
     receiveMailbox: normalizeCloudflareTempEmailReceiveMailbox(state.cloudflareTempEmailReceiveMailbox),
     useRandomSubdomain: Boolean(state.cloudflareTempEmailUseRandomSubdomain),
+    customSubdomain: String(state.cloudflareTempEmailCustomSubdomain || '').trim().toLowerCase(),
     domain: normalizeCloudflareTempEmailDomain(state.cloudflareTempEmailDomain),
     domains: normalizeCloudflareTempEmailDomains(state.cloudflareTempEmailDomains),
   };
@@ -3458,6 +3460,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeCloudflareTempEmailLookupMode(value);
     case 'cloudflareTempEmailReceiveMailbox':
       return normalizeCloudflareTempEmailReceiveMailbox(value);
+    case 'cloudflareTempEmailCustomSubdomain':
+      return String(value || '').trim().toLowerCase();
     case 'cloudflareTempEmailDomain':
       return normalizeCloudflareTempEmailDomain(value);
     case 'cloudflareTempEmailDomains':

@@ -42,11 +42,11 @@
       const digits = '0123456789';
       const chars = [];
 
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 12; i++) {
         chars.push(letters[Math.floor(Math.random() * letters.length)]);
       }
 
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 8; i++) {
         chars.push(digits[Math.floor(Math.random() * digits.length)]);
       }
 
@@ -158,28 +158,50 @@
         requireAdminAuth: true,
         requireDomain: true,
       });
-      const requestedName = String(options.localPart || options.name || '').trim().toLowerCase() || generateCloudflareAliasLocalPart();
-      const payload = {
-        enablePrefix: true,
-        enableRandomSubdomain: Boolean(config.useRandomSubdomain),
-        name: requestedName,
-        domain: config.domain,
-      };
-      const result = await requestCloudflareTempEmailJson(config, '/admin/new_address', {
-        method: 'POST',
-        payload,
-      });
-      const address = normalizeCloudflareTempEmailAddress(getCloudflareTempEmailAddressFromResponse(result));
-      if (!address) {
-        throw new Error('Cloudflare Temp Email 未返回可用邮箱地址。');
+      const explicitName = String(options.localPart || options.name || '').trim().toLowerCase();
+      const customSubdomain = String(config.customSubdomain || '').trim().toLowerCase();
+      const maxAttempts = explicitName ? 1 : 3;
+      let lastError = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        throwIfStopped();
+        const requestedName = explicitName || generateCloudflareAliasLocalPart();
+        const payload = {
+          enablePrefix: true,
+          enableRandomSubdomain: customSubdomain ? false : Boolean(config.useRandomSubdomain),
+          name: requestedName,
+          domain: customSubdomain ? `${customSubdomain}.${config.domain}` : config.domain,
+        };
+        if (customSubdomain) {
+          payload.subdomain = customSubdomain;
+        }
+
+        try {
+          const result = await requestCloudflareTempEmailJson(config, '/admin/new_address', {
+            method: 'POST',
+            payload,
+          });
+          const address = normalizeCloudflareTempEmailAddress(getCloudflareTempEmailAddressFromResponse(result));
+          if (!address) {
+            throw new Error('Cloudflare Temp Email did not return a usable email address.');
+          }
+
+          await persistResolvedEmailState(latestState, address, {
+            source: 'generated:cloudflare-temp-email',
+            preserveAccountIdentity: Boolean(options?.preserveAccountIdentity),
+          });
+          await addLog(`Cloudflare Temp Email: generated ${address}`, 'ok');
+          return address;
+        } catch (err) {
+          lastError = err;
+          if (explicitName || attempt >= maxAttempts) {
+            break;
+          }
+          await addLog(`Cloudflare Temp Email: address generation attempt ${attempt} failed, retrying with a new random prefix. ${err.message}`, 'warn');
+        }
       }
 
-      await persistResolvedEmailState(latestState, address, {
-        source: 'generated:cloudflare-temp-email',
-        preserveAccountIdentity: Boolean(options?.preserveAccountIdentity),
-      });
-      await addLog(`Cloudflare Temp Email：已生成 ${address}`, 'ok');
-      return address;
+      throw lastError || new Error('Cloudflare Temp Email address generation failed.');
     }
 
     function normalizeEmailForComparison(value) {
