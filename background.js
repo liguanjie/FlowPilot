@@ -11810,11 +11810,25 @@ async function probeClashProxyRegionExit(region = '', overrides = {}) {
   let diagnostic = '';
 
   while (attempt <= maxAttempts) {
-    switchResult = await api.switchClashProxyForRegion(normalizedRegion, probeState, {
-      fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
-      roundIndex: 1,
-      nodeOffset: attempt - 1,
-    });
+    try {
+      switchResult = await api.switchClashProxyForRegion(normalizedRegion, probeState, {
+        fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+        roundIndex: 1,
+        nodeOffset: attempt - 1,
+      });
+    } catch (switchError) {
+      switchResult = {
+        region: switchError?.clashProxyRegion || normalizedRegion,
+        group: switchError?.clashProxyGroup || probeState.clashProxyGroup || '',
+        node: switchError?.clashProxyNode || '',
+      };
+      error = `节点 ${switchResult.node || 'unknown node'} 切换失败：${getErrorMessage(switchError)}`;
+      if (attempt < maxAttempts && retryDelayMs > 0) {
+        await sleepWithStop(retryDelayMs);
+      }
+      attempt += 1;
+      continue;
+    }
     if (!switchResult || switchResult.skipped) {
       throw new Error('Clash 出口检测未执行节点切换，请确认已启用 IP 代理与 Clash 切节点。');
     }
@@ -11831,14 +11845,27 @@ async function probeClashProxyRegionExit(region = '', overrides = {}) {
       ipProxyRegion: switchResult.region || normalizedRegion,
       ipProxyAppliedRegion: switchResult.region || normalizedRegion,
     };
-    const appliedRouting = await applyIpProxySettingsFromState(routedState, {
-      skipExitProbe: true,
-      resetNetworkState: false,
-      forceAuthRebind: false,
-      suppressAuthRebind: true,
-    });
+    let appliedRouting = null;
+    try {
+      appliedRouting = await applyIpProxySettingsFromState(routedState, {
+        skipExitProbe: true,
+        resetNetworkState: false,
+        forceAuthRebind: false,
+        suppressAuthRebind: true,
+      });
+    } catch (routingError) {
+      appliedRouting = {
+        applied: false,
+        error: getErrorMessage(routingError),
+      };
+    }
     if (!appliedRouting?.applied) {
-      throw new Error(appliedRouting?.error || 'FlowPilot 未能接管浏览器代理到本地 Clash 端口。');
+      error = `节点 ${switchResult.node || 'unknown node'} 代理接管失败：${appliedRouting?.error || 'FlowPilot 未能接管浏览器代理到本地 Clash 端口。'}`;
+      if (attempt < maxAttempts && retryDelayMs > 0) {
+        await sleepWithStop(retryDelayMs);
+      }
+      attempt += 1;
+      continue;
     }
 
     if (retryDelayMs > 0) {
@@ -11938,11 +11965,34 @@ async function ensureClashProxyForExecutionStep(step, nodeId, state = {}) {
 
     while (attempt <= CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS) {
       const roundIndex = Number(latestState?.autoRunCurrentRun || state?.autoRunCurrentRun || 1) || 1;
-      const result = await api.ensureClashProxyForStep(step, latestState, {
-        fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
-        roundIndex,
-        nodeOffset: attempt - 1,
-      });
+      let result = null;
+      try {
+        result = await api.ensureClashProxyForStep(step, latestState, {
+          fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+          roundIndex,
+          nodeOffset: attempt - 1,
+        });
+      } catch (switchError) {
+        const unavailableRegion = normalizeClashProxyExitRegion(switchError?.clashProxyRegion || expectedRegion);
+        const unavailableNode = String(switchError?.clashProxyNode || '').trim();
+        const unavailableGroup = String(switchError?.clashProxyGroup || latestState?.clashProxyGroup || '').trim();
+        lastResult = {
+          region: unavailableRegion,
+          node: unavailableNode,
+          group: unavailableGroup,
+        };
+        const switchMessage = getErrorMessage(switchError);
+        await addLog(
+          `Clash 节点不可用（${attempt}/${CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS}）：${unavailableNode || 'unknown node'} 切换失败：${switchMessage}，10 秒后切换节点池下一个节点检测。`,
+          'warn',
+          { nodeId }
+        );
+        if (attempt < CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS) {
+          await sleepWithStop(CLASH_PROXY_REGION_VERIFY_RETRY_DELAY_MS);
+        }
+        attempt += 1;
+        continue;
+      }
       if (!result || result.skipped) {
         return latestState;
       }
@@ -11960,14 +12010,32 @@ async function ensureClashProxyForExecutionStep(step, nodeId, state = {}) {
         ipProxyRegion: result.region || '',
         ipProxyAppliedRegion: result.region || '',
       };
-      const proxyRouting = await applyIpProxySettingsFromState(routedState, {
-        skipExitProbe: true,
-        resetNetworkState: false,
-        forceAuthRebind: false,
-        suppressAuthRebind: true,
-      });
+      let proxyRouting = null;
+      try {
+        proxyRouting = await applyIpProxySettingsFromState(routedState, {
+          skipExitProbe: true,
+          resetNetworkState: false,
+          forceAuthRebind: false,
+          suppressAuthRebind: true,
+        });
+      } catch (routingError) {
+        proxyRouting = {
+          applied: false,
+          error: getErrorMessage(routingError),
+        };
+      }
       if (!proxyRouting?.applied) {
-        throw new Error(proxyRouting?.error || 'FlowPilot 未能接管浏览器代理到本地 Clash 端口。');
+        const routingError = proxyRouting?.error || 'FlowPilot 未能接管浏览器代理到本地 Clash 端口。';
+        await addLog(
+          `Clash 节点不可用（${attempt}/${CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS}）：${result.node || 'unknown node'} 代理接管失败：${routingError}，10 秒后切换节点池下一个节点检测。`,
+          'warn',
+          { nodeId }
+        );
+        if (attempt < CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS) {
+          await sleepWithStop(CLASH_PROXY_REGION_VERIFY_RETRY_DELAY_MS);
+        }
+        attempt += 1;
+        continue;
       }
 
       const probeResult = await probeClashProxyExitForRegion(latestState);

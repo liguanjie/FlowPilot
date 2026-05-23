@@ -93,6 +93,91 @@ test('message router module exposes a factory', () => {
   assert.equal(typeof api?.createMessageRouter, 'function');
 });
 
+test('message router persists Plus Checkout completion URL payloads by node key', async () => {
+  const source = fs.readFileSync('background/message-router.js', 'utf8');
+  const globalScope = { console };
+  const api = new Function('self', `${source}; return self.MultiPageBackgroundMessageRouter;`)(globalScope);
+  const updates = [];
+  const notifications = [];
+  let state = {
+    nodeStatuses: {
+      'plus-checkout-create': 'running',
+      'plus-checkout-open': 'pending',
+    },
+    currentNodeId: 'plus-checkout-create',
+  };
+
+  const router = api.createMessageRouter({
+    addLog: async () => {},
+    appendAccountRunRecord: async () => {},
+    appendManualAccountRunRecordIfNeeded: async () => {},
+    broadcastDataUpdate: () => {},
+    clearStopRequest: () => {},
+    getState: async () => ({ ...state }),
+    getStopRequested: () => false,
+    getNodeDefinitionForState: (nodeId) => ({ key: nodeId, flowId: 'openai' }),
+    getStepDefinitionForState: (step) => step === 7
+      ? { key: 'plus-checkout-create' }
+      : { key: 'plus-checkout-open' },
+    getStepIdByNodeIdForState: (nodeId) => nodeId === 'plus-checkout-create' ? 7 : 8,
+    getStepIdsForState: () => [7, 8],
+    getNodeIdsForState: () => ['plus-checkout-create', 'plus-checkout-open'],
+    isAutoRunLockedState: () => false,
+    isCloudflareSecurityBlockedError: () => false,
+    isStopError: () => false,
+    notifyNodeComplete: (nodeId, payload) => notifications.push({ nodeId, payload }),
+    notifyNodeError: () => {},
+    setNodeStatus: async (nodeId, status) => {
+      state = {
+        ...state,
+        currentNodeId: nodeId,
+        nodeStatuses: {
+          ...(state.nodeStatuses || {}),
+          [nodeId]: status,
+        },
+      };
+    },
+    setState: async (payload) => {
+      updates.push(payload);
+      state = { ...state, ...payload };
+    },
+  });
+
+  await router.handleMessage({
+    type: 'NODE_COMPLETE',
+    nodeId: 'plus-checkout-create',
+    payload: {
+      nodeId: 'plus-checkout-create',
+      plusCheckoutTabId: 55,
+      plusCheckoutUrl: 'https://pay.openai.com/c/pay/cs_saved',
+      plusCheckoutCountry: 'US',
+      plusCheckoutCurrency: 'USD',
+      plusCheckoutSource: 'paypal-hosted',
+    },
+  });
+
+  const plusPayload = updates.find((payload) => payload.plusCheckoutUrl);
+  assert.deepStrictEqual(plusPayload, {
+    plusCheckoutTabId: 55,
+    plusCheckoutUrl: 'https://pay.openai.com/c/pay/cs_saved',
+    plusCheckoutCountry: 'US',
+    plusCheckoutCurrency: 'USD',
+    plusCheckoutSource: 'paypal-hosted',
+  });
+  assert.deepStrictEqual(notifications.at(-1), {
+    nodeId: 'plus-checkout-create',
+    payload: {
+      nodeId: 'plus-checkout-create',
+      plusCheckoutTabId: 55,
+      plusCheckoutUrl: 'https://pay.openai.com/c/pay/cs_saved',
+      plusCheckoutCountry: 'US',
+      plusCheckoutCurrency: 'USD',
+      plusCheckoutSource: 'paypal-hosted',
+      step: 7,
+    },
+  });
+});
+
 test('SAVE_SETTING broadcasts free phone reuse setting updates for realtime sidepanel sync', async () => {
   const source = fs.readFileSync('background/message-router.js', 'utf8');
   const globalScope = { console };

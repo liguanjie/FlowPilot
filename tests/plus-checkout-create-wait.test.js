@@ -481,6 +481,111 @@ test('PayPal no-card binding open node opens and submits hosted OpenAI checkout 
   });
 });
 
+test('PayPal no-card binding open node recovers saved checkout URL from latest runtime state', async () => {
+  const events = [];
+  let currentUrl = 'https://chatgpt.com/';
+  const executor = api.createPlusCheckoutCreateExecutor({
+    addLog: async (message, level = 'info') => {
+      events.push({ type: 'log', message, level });
+    },
+    chrome: {
+      tabs: {
+        create: async (payload) => {
+          events.push({ type: 'tab-create', payload });
+          return { id: 56, url: payload.url, status: 'complete' };
+        },
+        update: async (tabId, payload) => {
+          currentUrl = payload.url;
+          events.push({ type: 'tab-update', tabId, payload });
+          return { id: tabId, url: currentUrl, status: 'complete' };
+        },
+        get: async (tabId) => ({ id: tabId, url: currentUrl, status: 'complete' }),
+      },
+    },
+    completeNodeFromBackground: async (step, payload) => {
+      events.push({ type: 'complete', step, payload });
+    },
+    ensureContentScriptReadyOnTabUntilStopped: async (source, tabId, options) => {
+      events.push({ type: 'ready', source, tabId, options });
+    },
+    fetch: async (url) => {
+      events.push({ type: 'fetch', url });
+      assert.equal(url, 'https://www.meiguodizhi.com/api/v1/dz');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          address: {
+            Address: '1 Main St',
+            City: 'New York',
+            State: 'New York',
+            Zip_Code: '10001',
+          },
+        }),
+      };
+    },
+    getState: async () => ({
+      plusPaymentMethod: 'paypal-hosted',
+      plusHostedCheckoutOauthDelaySeconds: 0,
+      runtimeState: {
+        flowState: {
+          openai: {
+            plus: {
+              plusCheckoutTabId: 55,
+              plusCheckoutUrl: 'https://pay.openai.com/c/pay/cs_runtime',
+              plusCheckoutCountry: 'US',
+              plusCheckoutCurrency: 'USD',
+            },
+          },
+        },
+      },
+    }),
+    registerTab: async (source, tabId) => {
+      events.push({ type: 'register', source, tabId });
+    },
+    sendTabMessageUntilStopped: async (tabId, source, message) => {
+      events.push({ type: 'tab-message', tabId, source, message });
+      if (message.type === 'RUN_PAYPAL_HOSTED_OPENAI_CHECKOUT_STEP') {
+        currentUrl = 'https://www.paypal.com/pay?token=BA-runtime';
+        return { clicked: true };
+      }
+      throw new Error(`unexpected message type ${message.type}`);
+    },
+    setState: async (payload) => {
+      events.push({ type: 'set-state', payload });
+    },
+    sleepWithStop: async (ms) => {
+      events.push({ type: 'sleep', ms });
+    },
+    waitForTabCompleteUntilStopped: async () => {
+      events.push({ type: 'tab-complete' });
+    },
+  });
+
+  await executor.executePlusCheckoutOpen({
+    plusPaymentMethod: 'paypal-hosted',
+    plusHostedCheckoutOauthDelaySeconds: 0,
+  });
+
+  assert.equal(
+    events.find((event) => event.type === 'tab-update')?.payload?.url,
+    'https://pay.openai.com/c/pay/cs_runtime'
+  );
+  assert.ok(events.some((event) => event.type === 'log' && /恢复 PayPal 支付长链接/.test(event.message)));
+  assert.deepStrictEqual(events.find((event) => event.type === 'complete'), {
+    type: 'complete',
+    step: 'plus-checkout-open',
+    payload: {
+      plusCheckoutCountry: 'US',
+      plusCheckoutCurrency: 'USD',
+      plusCheckoutSource: 'paypal-hosted',
+      plusCheckoutUrl: 'https://www.paypal.com/pay?token=BA-runtime',
+      plusReturnUrl: '',
+      plusHostedCheckoutCompleted: false,
+    },
+  });
+});
+
 test('PayPal no-card binding OpenAI checkout node submits hosted page and completes after success transition', async () => {
   const events = [];
   let currentUrl = 'https://pay.openai.com/c/pay/cs_hosted';

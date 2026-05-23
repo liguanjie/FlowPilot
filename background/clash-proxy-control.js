@@ -4,6 +4,8 @@
   const DEFAULT_CLASH_PROXY_CONTROL_URL = 'http://127.0.0.1:9097';
   const DEFAULT_OPENAI_FLOW_ID = 'openai';
   const CLASH_PROXY_FETCH_TIMEOUT_MS = 8000;
+  const CLASH_PROXY_TUN_RESTART_DISABLE_DELAY_MS = 800;
+  const CLASH_PROXY_TUN_RESTART_SETTLE_DELAY_MS = 2500;
   const CLASH_PROXY_PROBE_HOST_KEYWORDS = [
     'ipinfo.io',
     'api.ipify.org',
@@ -242,6 +244,22 @@
     return headers;
   }
 
+  function isPlainObject(value) {
+    return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+  }
+
+  async function sleepClashProxyControlDelay(ms = 0, options = {}) {
+    const delayMs = Math.max(0, Number(ms) || 0);
+    if (!delayMs) {
+      return;
+    }
+    if (typeof options.sleep === 'function') {
+      await options.sleep(delayMs);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
   async function fetchClashProxyJson(path = '', state = {}, options = {}) {
     const controlUrl = normalizeClashProxyControlUrl(state?.clashProxyControlUrl);
     const fetchImpl = options.fetch || root.fetch;
@@ -277,6 +295,114 @@
         clearTimeout(timer);
       }
     }
+  }
+
+  async function patchClashProxyConfig(payload = {}, state = {}, options = {}) {
+    const controlUrl = normalizeClashProxyControlUrl(state?.clashProxyControlUrl);
+    const fetchImpl = options.fetch || root.fetch;
+    if (typeof fetchImpl !== 'function') {
+      throw new Error('当前环境不支持调用 Clash 控制接口。');
+    }
+
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutMs = Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : CLASH_PROXY_FETCH_TIMEOUT_MS;
+    const timer = controller
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+    try {
+      const response = await fetchImpl(`${controlUrl}/configs`, {
+        method: 'PATCH',
+        headers: buildClashProxyAuthHeaders(state, true),
+        body: JSON.stringify(payload || {}),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (!response?.ok) {
+        throw await parseClashProxyErrorResponse(response || { status: 0, text: async () => '' });
+      }
+      return { ok: true };
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`Clash 控制接口超时（${timeoutMs}ms）。`);
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  async function closeClashProxyConnections(state = {}, options = {}) {
+    if (options.closeConnections === false) {
+      return { skipped: true, reason: 'disabled' };
+    }
+
+    const controlUrl = normalizeClashProxyControlUrl(state?.clashProxyControlUrl);
+    const fetchImpl = options.fetch || root.fetch;
+    if (typeof fetchImpl !== 'function') {
+      throw new Error('当前环境不支持调用 Clash 控制接口。');
+    }
+
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutMs = Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : CLASH_PROXY_FETCH_TIMEOUT_MS;
+    const timer = controller
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+    try {
+      const response = await fetchImpl(`${controlUrl}/connections`, {
+        method: 'DELETE',
+        headers: buildClashProxyAuthHeaders(state),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (!response?.ok) {
+        throw await parseClashProxyErrorResponse(response || { status: 0, text: async () => '' });
+      }
+      return { skipped: false, closed: true };
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`Clash 控制接口超时（${timeoutMs}ms）。`);
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  async function restartClashProxyTunIfEnabled(state = {}, options = {}) {
+    if (options.restartTun === false) {
+      return { skipped: true, reason: 'disabled' };
+    }
+
+    const config = await fetchClashProxyJson('/configs', state, options);
+    const tunConfig = isPlainObject(config?.tun) ? config.tun : null;
+    if (!tunConfig?.enable) {
+      return { skipped: true, reason: 'tun_disabled' };
+    }
+
+    await patchClashProxyConfig({ tun: { ...tunConfig, enable: false } }, state, options);
+    await sleepClashProxyControlDelay(
+      options.tunRestartDisableDelayMs ?? CLASH_PROXY_TUN_RESTART_DISABLE_DELAY_MS,
+      options
+    );
+    await patchClashProxyConfig({ tun: { ...tunConfig, enable: true } }, state, options);
+    await sleepClashProxyControlDelay(
+      options.tunRestartSettleDelayMs ?? CLASH_PROXY_TUN_RESTART_SETTLE_DELAY_MS,
+      options
+    );
+
+    return {
+      skipped: false,
+      restarted: true,
+      enabled: true,
+    };
   }
 
   async function switchClashProxyForRegion(region = '', state = {}, options = {}) {
@@ -315,12 +441,27 @@
         group: request.group,
         node: request.node,
         url: request.url,
+        closedConnections: await closeClashProxyConnections(state, options).catch((connectionError) => ({
+          skipped: true,
+          reason: 'close_failed',
+          error: connectionError?.message || String(connectionError || ''),
+        })),
+        tunRestart: await restartClashProxyTunIfEnabled(state, options).catch((tunError) => ({
+          skipped: true,
+          reason: 'restart_failed',
+          error: tunError?.message || String(tunError || ''),
+        })),
       };
     } catch (error) {
-      if (error?.name === 'AbortError') {
-        throw new Error(`Clash 控制接口超时（${timeoutMs}ms）。`);
+      const normalizedError = error?.name === 'AbortError'
+        ? new Error(`Clash 控制接口超时（${timeoutMs}ms）。`)
+        : error;
+      if (normalizedError && typeof normalizedError === 'object') {
+        normalizedError.clashProxyRegion = request.region;
+        normalizedError.clashProxyGroup = request.group;
+        normalizedError.clashProxyNode = request.node;
       }
-      throw error;
+      throw normalizedError;
     } finally {
       if (timer) {
         clearTimeout(timer);
@@ -581,6 +722,7 @@
     fetchClashProxyDiagnostics,
     fetchClashProxyGroupStatus,
     fetchClashProxyOptions,
+    closeClashProxyConnections,
     normalizeClashProxyNodePool,
     normalizeClashProxyControlUrl,
     normalizeClashProxyRegion,

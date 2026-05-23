@@ -821,6 +821,27 @@
         return;
       }
 
+      if (stepKey === 'plus-checkout-create' || stepKey === 'plus-checkout-open') {
+        const updates = {};
+        [
+          'plusCheckoutTabId',
+          'plusCheckoutUrl',
+          'plusCheckoutCountry',
+          'plusCheckoutCurrency',
+          'plusCheckoutSource',
+          'plusReturnUrl',
+          'plusHostedCheckoutCompleted',
+        ].forEach((key) => {
+          if (Object.prototype.hasOwnProperty.call(payload || {}, key)) {
+            updates[key] = payload[key];
+          }
+        });
+        if (Object.keys(updates).length > 0) {
+          await setState(updates);
+        }
+        return;
+      }
+
       switch (step) {
         case 1: {
           const updates = {};

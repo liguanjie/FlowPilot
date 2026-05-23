@@ -141,16 +141,81 @@ test('Clash proxy switch request uses configured group, node, control URL, and s
     clashProxyGroup: 'sushi',
     clashProxyJapanNode: 'jp-node',
     clashProxyUsNode: 'us-node',
-  }, { fetch });
+  }, { fetch, restartTun: false });
 
   assert.equal(result.switched, true);
   assert.equal(result.region, 'JP');
   assert.equal(result.node, 'jp-node');
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].url, 'http://127.0.0.1:9090/proxies/sushi');
   assert.equal(calls[0].options.method, 'PUT');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer secret-token');
   assert.deepEqual(JSON.parse(calls[0].options.body), { name: 'jp-node' });
+  assert.equal(calls[1].url, 'http://127.0.0.1:9090/connections');
+  assert.equal(calls[1].options.method, 'DELETE');
+});
+
+test('Clash proxy switch restarts enabled TUN after changing node', async () => {
+  const api = loadClashProxyControl();
+  const calls = [];
+  const sleeps = [];
+  const fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url === 'http://127.0.0.1:9097/configs' && options.method === 'GET') {
+      return {
+        ok: true,
+        json: async () => ({
+          mode: 'rule',
+          tun: {
+            enable: true,
+            stack: 'gvisor',
+            'auto-route': true,
+          },
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 204,
+      text: async () => '',
+    };
+  };
+
+  const result = await api.switchClashProxyForRegion('JP', {
+    ipProxyEnabled: true,
+    clashProxySwitchEnabled: true,
+    clashProxyControlUrl: 'http://127.0.0.1:9097',
+    clashProxySecret: 'secret-token',
+    clashProxyGroup: 'sushi',
+    clashProxyJapanNode: 'jp-node',
+  }, {
+    fetch,
+    sleep: async (ms) => sleeps.push(ms),
+    tunRestartDisableDelayMs: 1,
+    tunRestartSettleDelayMs: 2,
+  });
+
+  assert.equal(result.switched, true);
+  assert.equal(result.tunRestart.restarted, true);
+  assert.deepEqual(
+    calls.map((call) => `${call.options.method} ${new URL(call.url).pathname}`),
+    ['PUT /proxies/sushi', 'DELETE /connections', 'GET /configs', 'PATCH /configs', 'PATCH /configs']
+  );
+  assert.deepEqual(JSON.parse(calls[3].options.body), {
+    tun: {
+      enable: false,
+      stack: 'gvisor',
+      'auto-route': true,
+    },
+  });
+  assert.deepEqual(JSON.parse(calls[4].options.body), {
+    tun: {
+      enable: true,
+      stack: 'gvisor',
+      'auto-route': true,
+    },
+  });
+  assert.deepEqual(sleeps, [1, 2]);
 });
 
 test('Clash proxy switch request rotates within configured node pools by round and retry offset', () => {
@@ -167,6 +232,34 @@ test('Clash proxy switch request rotates within configured node pools by round a
   assert.equal(api.buildClashProxySwitchRequest('JP', state).node, 'jp-b');
   assert.equal(api.buildClashProxySwitchRequest('JP', state, { nodeOffset: 1 }).node, 'jp-c');
   assert.equal(api.buildClashProxySwitchRequest('JP', state, { nodeOffset: 2 }).node, 'jp-a');
+});
+
+test('Clash proxy switch errors carry the failed node for pool rotation diagnostics', async () => {
+  const api = loadClashProxyControl();
+
+  await assert.rejects(
+    () => api.switchClashProxyForRegion('JP', {
+      ipProxyEnabled: true,
+      clashProxySwitchEnabled: true,
+      clashProxyControlUrl: 'http://127.0.0.1:9097',
+      clashProxyGroup: 'sushi',
+      clashProxyJapanNodes: ['jp-a', 'jp-b'],
+    }, {
+      nodeOffset: 1,
+      fetch: async () => ({
+        ok: false,
+        status: 503,
+        text: async () => 'node unavailable',
+      }),
+    }),
+    (error) => {
+      assert.equal(error.clashProxyRegion, 'JP');
+      assert.equal(error.clashProxyGroup, 'sushi');
+      assert.equal(error.clashProxyNode, 'jp-b');
+      assert.match(error.message, /503/);
+      return true;
+    }
+  );
 });
 
 test('Clash proxy options are parsed from selector groups and fetched with secret', async () => {
@@ -463,6 +556,59 @@ test('manual Clash region probe retries and rotates nodes before reporting succe
   assert.equal(result.node, 'jp-c');
 });
 
+test('manual Clash region probe skips unavailable nodes and keeps rotating', async () => {
+  const switchOffsets = [];
+  const routedStates = [];
+  const api = {
+    switchClashProxyForRegion: async (region, state, options = {}) => {
+      switchOffsets.push(options.nodeOffset);
+      if (options.nodeOffset < 2) {
+        const error = new Error('node unavailable');
+        error.clashProxyRegion = region;
+        error.clashProxyGroup = state.clashProxyGroup;
+        error.clashProxyNode = state.clashProxyJapanNodes[options.nodeOffset];
+        throw error;
+      }
+      return {
+        switched: true,
+        region,
+        group: state.clashProxyGroup,
+        node: state.clashProxyJapanNodes[options.nodeOffset % state.clashProxyJapanNodes.length],
+      };
+    },
+  };
+  const harness = loadManualRegionProbeHarness({
+    api,
+    getState: async () => ({
+      ipProxyEnabled: true,
+      clashProxyGroup: 'sushi',
+      clashProxyJapanNodes: ['jp-a', 'jp-b', 'jp-c'],
+      clashProxyUsNodes: ['us-home'],
+    }),
+    applyIpProxySettingsFromState: async (state, options) => {
+      routedStates.push({ state, options });
+      return { applied: true };
+    },
+    probeIpProxyExit: async () => ({
+      proxyRouting: {
+        applied: true,
+        provider: 'clash-verge',
+        exitIp: '203.0.113.30',
+        exitRegion: 'JP',
+      },
+    }),
+    sleepWithStop: () => {},
+  });
+
+  const result = await harness('JP', { maxAttempts: 5, retryDelayMs: 0 });
+
+  assert.equal(result.matched, true);
+  assert.equal(result.attempts, 3);
+  assert.deepEqual(switchOffsets, [0, 1, 2]);
+  assert.equal(routedStates.length, 1);
+  assert.equal(result.node, 'jp-c');
+});
+
 test('manual Clash region probe records Clash diagnostics when exit region mismatches', async () => {
   const stateUpdates = [];
   const api = {
@@ -597,6 +743,60 @@ test('background execution hook retries switch and IP region probe until expecte
   assert.equal(logs[0].level, 'warn');
   assert.equal(logs[1].level, 'info');
   assert.equal(result.clashProxyLastRegion, 'JP');
+});
+
+test('background execution hook skips unavailable pool nodes before probing the next node', async () => {
+  const logs = [];
+  const sleeps = [];
+  const routedStates = [];
+  const switchOptions = [];
+  let probeCount = 0;
+  const api = {
+    resolveClashProxyRegionForStep: () => 'JP',
+    ensureClashProxyForStep: async (_step, _state, options = {}) => {
+      switchOptions.push(options);
+      if (options.nodeOffset < 2) {
+        const error = new Error('node unavailable');
+        error.clashProxyRegion = 'JP';
+        error.clashProxyGroup = 'sushi';
+        error.clashProxyNode = `jp-node-${options.nodeOffset}`;
+        throw error;
+      }
+      return {
+        switched: true,
+        region: 'JP',
+        group: 'sushi',
+        node: `jp-node-${options.nodeOffset}`,
+      };
+    },
+  };
+  const harness = loadExecutionHookHarness({
+    api,
+    applyIpProxySettingsFromState: async (state, options) => {
+      routedStates.push({ state, options });
+      return { applied: true };
+    },
+    addLog: (message, level, meta) => logs.push({ message, level, meta }),
+    probeIpProxyExit: async () => {
+      probeCount += 1;
+      return probeCount === 1
+        ? { ok: true, exitIp: '1.1.1.1', exitRegion: 'US' }
+        : { ok: true, exitIp: '2.2.2.2', exitRegion: 'JP' };
+    },
+    sleepWithStop: (ms) => sleeps.push(ms),
+  });
+
+  const result = await harness(8, 'plus-checkout-open', {
+    ipProxyEnabled: true,
+    clashProxySwitchEnabled: true,
+  });
+
+  assert.deepEqual(switchOptions.map((options) => options.nodeOffset), [0, 1, 2]);
+  assert.deepEqual(sleeps, [10000, 10000]);
+  assert.equal(routedStates.length, 1);
+  assert.equal(logs.filter((entry) => entry.level === 'warn').length, 2);
+  assert.equal(logs.at(-1).level, 'info');
+  assert.equal(result.clashProxyLastNode, 'jp-node-2');
 });
 
 test('background execution hook fails after one hour of mismatched IP region probes', async () => {

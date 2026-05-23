@@ -720,6 +720,43 @@
       return String(result?.checkoutUrl || '').trim();
     }
 
+    function readPlusCheckoutStateValue(state = {}, key = '') {
+      if (!key) {
+        return undefined;
+      }
+      if (Object.prototype.hasOwnProperty.call(state || {}, key)) {
+        return state[key];
+      }
+      const nestedPlusState = state?.runtimeState?.flowState?.openai?.plus
+        || state?.flowState?.openai?.plus
+        || state?.flows?.openai?.plus
+        || null;
+      return nestedPlusState && Object.prototype.hasOwnProperty.call(nestedPlusState, key)
+        ? nestedPlusState[key]
+        : undefined;
+    }
+
+    async function resolvePlusCheckoutOpenState(state = {}) {
+      const directUrl = String(readPlusCheckoutStateValue(state, 'plusCheckoutUrl') || '').trim();
+      if (directUrl) {
+        return state;
+      }
+      if (typeof getState !== 'function') {
+        return state;
+      }
+      const latestState = await getState().catch(() => null);
+      const latestUrl = String(readPlusCheckoutStateValue(latestState, 'plusCheckoutUrl') || '').trim();
+      if (!latestUrl) {
+        return state;
+      }
+      await addLog('步骤 8：已从最新状态恢复 PayPal 支付长链接，继续打开。', 'info');
+      return {
+        ...(state || {}),
+        ...(latestState || {}),
+        plusCheckoutUrl: latestUrl,
+      };
+    }
+
     async function executeHostedCheckoutCreate(tabId, state = {}, result = {}, options = {}) {
       const completionNodeId = String(options?.completionNodeId || 'plus-checkout-create').trim() || 'plus-checkout-create';
       const targetCheckoutUrl = resolveCheckoutTargetUrl(result, PLUS_PAYMENT_METHOD_PAYPAL_HOSTED);
@@ -774,23 +811,24 @@
     }
 
     async function executePlusCheckoutOpen(state = {}) {
-      const targetCheckoutUrl = String(state?.plusCheckoutUrl || '').trim();
+      const resolvedState = await resolvePlusCheckoutOpenState(state);
+      const targetCheckoutUrl = String(readPlusCheckoutStateValue(resolvedState, 'plusCheckoutUrl') || '').trim();
       if (!targetCheckoutUrl) {
         throw new Error('步骤 8：缺少 PayPal 支付长链接，请先执行“创建 Plus Checkout”。');
       }
 
-      const storedTabId = Number(state?.plusCheckoutTabId) || 0;
+      const storedTabId = Number(readPlusCheckoutStateValue(resolvedState, 'plusCheckoutTabId')) || 0;
       const storedTab = await getTabById(storedTabId);
       let tabId = Number(storedTab?.id) || 0;
       if (!tabId) {
         tabId = await openFreshChatGptTabForCheckoutCreate();
       }
 
-      await executeHostedCheckoutCreate(tabId, state, {
+      await executeHostedCheckoutCreate(tabId, resolvedState, {
         preferredCheckoutUrl: targetCheckoutUrl,
         checkoutUrl: targetCheckoutUrl,
-        country: state?.plusCheckoutCountry || 'US',
-        currency: state?.plusCheckoutCurrency || 'USD',
+        country: readPlusCheckoutStateValue(resolvedState, 'plusCheckoutCountry') || 'US',
+        currency: readPlusCheckoutStateValue(resolvedState, 'plusCheckoutCurrency') || 'USD',
       }, {
         completionNodeId: 'plus-checkout-open',
       });
