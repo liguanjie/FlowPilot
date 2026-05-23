@@ -15628,7 +15628,10 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
       throw new Error('AUTH_MAX_CHECK_ATTEMPTS::max_check_attempts on step 5 auth retry page; restart the current auth step without clicking Retry.');
     }
 
-    if (isStep5ChatgptOnboardingState(pageState)) {
+    if (
+      isStep5ChatgptOnboardingState(pageState)
+      && !(currentUrl && isStep5CompletionChatgptUrl(currentUrl))
+    ) {
       await debugLog('后台复核检测到 ChatGPT 用途选择页，准备点击 Skip 跳过引导。', {
         completionOutcome: String(completionPayload?.outcome || '').trim(),
         completionUrl: String(completionPayload?.url || '').trim(),
@@ -15683,6 +15686,28 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
     }
 
     if (currentUrl && isStep5CompletionChatgptUrl(currentUrl)) {
+      if (isStep5ChatgptOnboardingState(pageState)) {
+        await debugLog('后台已进入 chatgpt.com 且检测到 ChatGPT 用途选择页，准备点击 Skip 跳过引导。', {
+          completionOutcome: String(completionPayload?.outcome || '').trim(),
+          completionUrl: String(completionPayload?.url || '').trim(),
+          navigationStarted: Boolean(completionPayload?.navigationStarted),
+          tabUrl: currentUrl,
+          pageState,
+          level: 'warn',
+        });
+        await completeStep5ChatgptOnboardingOnTab({
+          timeoutMs: 15000,
+          retryDelayMs: 600,
+          logMessage: '步骤 5：正在跳过 ChatGPT 用途选择引导页...',
+        });
+        await waitForTabStableComplete(tabId, {
+          timeoutMs: 30000,
+          retryDelayMs: 300,
+          stableMs: 1000,
+          initialDelayMs: 300,
+        }).catch(() => null);
+      }
+
       await debugLog('后台通过标签页 URL 确认已进入 chatgpt.com，步骤 5 完成。', {
         completionOutcome: String(completionPayload?.outcome || '').trim(),
         completionUrl: String(completionPayload?.url || '').trim(),

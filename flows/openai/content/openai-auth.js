@@ -7055,14 +7055,6 @@ async function waitForStep5SubmitOutcome(options = {}) {
       continue;
     }
 
-    const successState = getStep5PostSubmitSuccessState();
-    if (successState) {
-      debugLog(`检测到资料提交成功状态：${successState.state || 'unknown'}`, {
-        level: 'ok',
-      });
-      return successState;
-    }
-
     if (isStep5ChatgptOnboardingPage()) {
       const onboardingResult = await completeStep5ChatgptOnboarding();
       debugLog(`ChatGPT onboarding handled: ${onboardingResult?.state || 'unknown'}`, {
@@ -7070,6 +7062,14 @@ async function waitForStep5SubmitOutcome(options = {}) {
       });
       lastSubmitClickAt = Date.now();
       continue;
+    }
+
+    const successState = getStep5PostSubmitSuccessState();
+    if (successState) {
+      debugLog(`检测到资料提交成功状态：${successState.state || 'unknown'}`, {
+        level: 'ok',
+      });
+      return successState;
     }
 
     const step5Error = typeof getStep5ErrorText === 'function' ? getStep5ErrorText() : '';
@@ -7108,14 +7108,18 @@ async function waitForStep5SubmitOutcome(options = {}) {
     throw new Error(`步骤 5：资料提交后仍停留在认证重试页，自动恢复未完成。URL: ${location.href}`);
   }
 
+  if (isStep5ChatgptOnboardingPage()) {
+    const onboardingResult = await completeStep5ChatgptOnboarding();
+    const postOnboardingSuccessState = getStep5PostSubmitSuccessState();
+    if (postOnboardingSuccessState) {
+      return postOnboardingSuccessState;
+    }
+    throw new Error(`Step 5 reached ChatGPT onboarding but has not reached chatgpt.com yet. State: ${onboardingResult?.state || 'unknown'}. URL: ${location.href}`);
+  }
+
   const finalSuccessState = getStep5PostSubmitSuccessState();
   if (finalSuccessState) {
     return finalSuccessState;
-  }
-
-  if (isStep5ChatgptOnboardingPage()) {
-    const onboardingResult = await completeStep5ChatgptOnboarding();
-    throw new Error(`Step 5 reached ChatGPT onboarding but has not reached chatgpt.com yet. State: ${onboardingResult?.state || 'unknown'}. URL: ${location.href}`);
   }
 
   const finalStep5Error = (typeof getStep5ErrorText === 'function' ? getStep5ErrorText() : '') || lastStep5Error;
