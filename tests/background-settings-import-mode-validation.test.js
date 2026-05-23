@@ -293,3 +293,316 @@ return {
   assert.equal(api.getPersistedUpdates().settingsSchemaVersion, 5);
   assert.equal(api.getPersistedUpdates().settingsState.flows.kiro.targets['kiro-rs'].apiKey, 'imported-key');
 });
+
+test('importSettingsBundle preserves flat email generator and Cloudflare Temp Email settings after schema import', async () => {
+  const api = new Function(`
+const SETTINGS_EXPORT_SCHEMA_VERSION = 1;
+const DEFAULT_REGISTRATION_EMAIL_STATE = { emailHistory: [] };
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+const PERSISTED_SETTING_KEYS = [
+  'targetId',
+  'mailProvider',
+  'emailGenerator',
+  'cloudflareTempEmailBaseUrl',
+  'cloudflareTempEmailAdminAuth',
+  'cloudflareTempEmailCustomAuth',
+  'cloudflareTempEmailLookupMode',
+  'cloudflareTempEmailReceiveMailbox',
+  'cloudflareTempEmailUseRandomSubdomain',
+  'cloudflareTempEmailCustomSubdomain',
+  'cloudflareTempEmailDomain',
+  'cloudflareTempEmailDomains',
+];
+const SETTINGS_SCHEMA_VIEW_KEY_SET = new Set(['targetId', 'mailProvider']);
+let importerInput = null;
+let persistedUpdates = null;
+let currentState = {
+  activeFlowId: 'openai',
+  nodeStatuses: {},
+};
+const self = {
+  MultiPageFlowRegistry: {
+    DEFAULT_FLOW_ID: 'openai',
+  },
+  MultiPageLegacySettingsImporter: {
+    createSettingsImporter() {
+      return {
+        importSettings(settings = {}) {
+          importerInput = JSON.parse(JSON.stringify(settings));
+          return {
+            settingsSchemaVersion: 5,
+            settingsState: {
+              schemaVersion: 5,
+              activeFlowId: 'openai',
+              services: {
+                account: { customPassword: '' },
+                email: { provider: 'cloudflare-temp-email' },
+                proxy: { enabled: false, provider: '711proxy', mode: 'account' },
+              },
+              flows: {},
+            },
+          };
+        },
+      };
+    },
+  },
+};
+async function ensureManualInteractionAllowed() {
+  return currentState;
+}
+function buildPersistentSettingsPayload(settings = {}) {
+  const payload = {};
+  for (const key of [
+    'emailGenerator',
+    'cloudflareTempEmailBaseUrl',
+    'cloudflareTempEmailAdminAuth',
+    'cloudflareTempEmailCustomAuth',
+    'cloudflareTempEmailLookupMode',
+    'cloudflareTempEmailReceiveMailbox',
+    'cloudflareTempEmailUseRandomSubdomain',
+    'cloudflareTempEmailCustomSubdomain',
+    'cloudflareTempEmailDomain',
+    'cloudflareTempEmailDomains',
+    'settingsSchemaVersion',
+    'settingsState',
+  ]) {
+    if (settings[key] !== undefined) {
+      payload[key] = settings[key];
+    }
+  }
+  return payload;
+}
+function validateModeSwitchState() {
+  return { normalizedUpdates: {} };
+}
+function resolveSignupMethod() {
+  return 'email';
+}
+function getSettingsSchemaApi() {
+  return null;
+}
+async function setPersistentSettings(updates) {
+  persistedUpdates = JSON.parse(JSON.stringify(updates));
+  return updates;
+}
+async function setState(updates) {
+  currentState = { ...currentState, ...updates };
+}
+function broadcastDataUpdate() {}
+async function getState() {
+  return currentState;
+}
+${extractFunction('importSettingsBundle')}
+return {
+  importSettingsBundle,
+  getImporterInput: () => importerInput,
+  getPersistedUpdates: () => persistedUpdates,
+};
+`)();
+
+  await api.importSettingsBundle({
+    schemaVersion: 1,
+    settings: {
+      targetId: 'cpa',
+      mailProvider: 'cloudflare-temp-email',
+      emailGenerator: 'cloudflare-temp-email',
+      cloudflareTempEmailBaseUrl: 'https://temp.example.com',
+      cloudflareTempEmailAdminAuth: 'admin-secret',
+      cloudflareTempEmailCustomAuth: 'custom-secret',
+      cloudflareTempEmailLookupMode: 'registration-email',
+      cloudflareTempEmailReceiveMailbox: 'relay@example.com',
+      cloudflareTempEmailUseRandomSubdomain: true,
+      cloudflareTempEmailCustomSubdomain: 'edu',
+      cloudflareTempEmailDomain: 'aixcode.xyz',
+      cloudflareTempEmailDomains: ['aixcode.xyz', 'alt.example.com'],
+    },
+  });
+
+  assert.equal(api.getImporterInput().emailGenerator, 'cloudflare-temp-email');
+  assert.equal(api.getPersistedUpdates().emailGenerator, 'cloudflare-temp-email');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailBaseUrl, 'https://temp.example.com');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailAdminAuth, 'admin-secret');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailCustomAuth, 'custom-secret');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailLookupMode, 'registration-email');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailReceiveMailbox, 'relay@example.com');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailUseRandomSubdomain, true);
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailCustomSubdomain, 'edu');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailDomain, 'aixcode.xyz');
+  assert.deepEqual(api.getPersistedUpdates().cloudflareTempEmailDomains, ['aixcode.xyz', 'alt.example.com']);
+});
+
+test('importSettingsBundle preserves Clash Verge proxy settings after schema import', async () => {
+  const api = new Function(`
+const SETTINGS_EXPORT_SCHEMA_VERSION = 1;
+const DEFAULT_REGISTRATION_EMAIL_STATE = { emailHistory: [] };
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+const PERSISTED_SETTING_KEYS = [
+  'ipProxyEnabled',
+  'ipProxyService',
+  'ipProxyMode',
+  'ipProxyServiceProfiles',
+  'clashProxySwitchEnabled',
+  'clashProxyControlUrl',
+  'clashProxySecret',
+  'clashProxyGroup',
+  'clashProxyJapanNode',
+  'clashProxyJapanNodes',
+  'clashProxyUsNode',
+  'clashProxyUsNodes',
+];
+const SETTINGS_SCHEMA_VIEW_KEY_SET = new Set(['ipProxyEnabled', 'ipProxyService', 'ipProxyMode']);
+let importerInput = null;
+let persistedUpdates = null;
+let currentState = {
+  activeFlowId: 'openai',
+  nodeStatuses: {},
+};
+const self = {
+  MultiPageFlowRegistry: {
+    DEFAULT_FLOW_ID: 'openai',
+  },
+  MultiPageLegacySettingsImporter: {
+    createSettingsImporter() {
+      return {
+        importSettings(settings = {}) {
+          importerInput = JSON.parse(JSON.stringify(settings));
+          return {
+            settingsSchemaVersion: 5,
+            settingsState: {
+              schemaVersion: 5,
+              activeFlowId: 'openai',
+              services: {
+                account: { customPassword: '' },
+                email: { provider: '163' },
+                proxy: {
+                  enabled: Boolean(settings.ipProxyEnabled),
+                  provider: settings.ipProxyService,
+                  mode: settings.ipProxyMode,
+                  clash: {
+                    switchEnabled: settings.clashProxySwitchEnabled,
+                    controlUrl: settings.clashProxyControlUrl,
+                    secret: settings.clashProxySecret,
+                    group: settings.clashProxyGroup,
+                    japanNode: settings.clashProxyJapanNode,
+                    japanNodes: settings.clashProxyJapanNodes,
+                    usNode: settings.clashProxyUsNode,
+                    usNodes: settings.clashProxyUsNodes,
+                  },
+                },
+              },
+              flows: {},
+            },
+          };
+        },
+      };
+    },
+  },
+};
+async function ensureManualInteractionAllowed() {
+  return currentState;
+}
+function buildPersistentSettingsPayload(settings = {}) {
+  const payload = {};
+  for (const key of [
+    'ipProxyServiceProfiles',
+    'clashProxySwitchEnabled',
+    'clashProxyControlUrl',
+    'clashProxySecret',
+    'clashProxyGroup',
+    'clashProxyJapanNode',
+    'clashProxyJapanNodes',
+    'clashProxyUsNode',
+    'clashProxyUsNodes',
+    'settingsSchemaVersion',
+    'settingsState',
+  ]) {
+    if (settings[key] !== undefined) {
+      payload[key] = settings[key];
+    }
+  }
+  const proxy = settings.settingsState?.services?.proxy || {};
+  if (proxy.enabled !== undefined) {
+    payload.ipProxyEnabled = Boolean(proxy.enabled);
+  }
+  if (proxy.provider !== undefined) {
+    payload.ipProxyService = proxy.provider;
+  }
+  if (proxy.mode !== undefined) {
+    payload.ipProxyMode = proxy.mode;
+  }
+  return payload;
+}
+function validateModeSwitchState() {
+  return { normalizedUpdates: {} };
+}
+function resolveSignupMethod() {
+  return 'email';
+}
+function getSettingsSchemaApi() {
+  return null;
+}
+async function setPersistentSettings(updates) {
+  persistedUpdates = JSON.parse(JSON.stringify(updates));
+  return updates;
+}
+async function setState(updates) {
+  currentState = { ...currentState, ...updates };
+}
+function broadcastDataUpdate() {}
+async function getState() {
+  return currentState;
+}
+${extractFunction('importSettingsBundle')}
+return {
+  importSettingsBundle,
+  getImporterInput: () => importerInput,
+  getPersistedUpdates: () => persistedUpdates,
+};
+`)();
+
+  await api.importSettingsBundle({
+    schemaVersion: 1,
+    settings: {
+      ipProxyEnabled: true,
+      ipProxyService: 'clash-verge',
+      ipProxyMode: 'account',
+      ipProxyServiceProfiles: {
+        'clash-verge': {
+          mode: 'account',
+          host: '127.0.0.1',
+          port: '7897',
+          protocol: 'http',
+        },
+      },
+      clashProxySwitchEnabled: true,
+      clashProxyControlUrl: 'http://127.0.0.1:9097',
+      clashProxySecret: 'set-your-secret',
+      clashProxyGroup: '寿司云',
+      clashProxyJapanNode: '日本 04 家宽 4倍流量 softbank',
+      clashProxyJapanNodes: ['日本 04 家宽 4倍流量 softbank', '日本家宽1 | 4倍流量 | softbank'],
+      clashProxyUsNode: 'VIP美国家宽4 | 4倍流量',
+      clashProxyUsNodes: ['VIP美国家宽4 | 4倍流量', '美国 01'],
+    },
+  });
+
+  assert.equal(api.getImporterInput().ipProxyService, 'clash-verge');
+  assert.equal(api.getPersistedUpdates().ipProxyEnabled, true);
+  assert.equal(api.getPersistedUpdates().ipProxyService, 'clash-verge');
+  assert.equal(api.getPersistedUpdates().ipProxyMode, 'account');
+  assert.deepEqual(api.getPersistedUpdates().ipProxyServiceProfiles['clash-verge'], {
+    mode: 'account',
+    host: '127.0.0.1',
+    port: '7897',
+    protocol: 'http',
+  });
+  assert.equal(api.getPersistedUpdates().clashProxySwitchEnabled, true);
+  assert.equal(api.getPersistedUpdates().clashProxyControlUrl, 'http://127.0.0.1:9097');
+  assert.equal(api.getPersistedUpdates().clashProxySecret, 'set-your-secret');
+  assert.equal(api.getPersistedUpdates().clashProxyGroup, '寿司云');
+  assert.equal(api.getPersistedUpdates().clashProxyJapanNode, '日本 04 家宽 4倍流量 softbank');
+  assert.deepEqual(api.getPersistedUpdates().clashProxyJapanNodes, ['日本 04 家宽 4倍流量 softbank', '日本家宽1 | 4倍流量 | softbank']);
+  assert.equal(api.getPersistedUpdates().clashProxyUsNode, 'VIP美国家宽4 | 4倍流量');
+  assert.deepEqual(api.getPersistedUpdates().clashProxyUsNodes, ['VIP美国家宽4 | 4倍流量', '美国 01']);
+  assert.equal(api.getPersistedUpdates().settingsState.services.proxy.provider, 'clash-verge');
+  assert.deepEqual(api.getPersistedUpdates().settingsState.services.proxy.clash.usNodes, ['VIP美国家宽4 | 4倍流量', '美国 01']);
+});

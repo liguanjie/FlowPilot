@@ -28,6 +28,7 @@ if (document.documentElement.getAttribute(OPENAI_AUTH_LISTENER_SENTINEL) !== '1'
       || message.type === 'GET_LOGIN_AUTH_STATE'
       || message.type === 'SUBMIT_ADD_EMAIL'
       || message.type === 'GET_STEP5_SUBMIT_STATE'
+      || message.type === 'COMPLETE_STEP5_CHATGPT_ONBOARDING'
       || message.type === 'PREPARE_SIGNUP_VERIFICATION'
       || message.type === 'RECOVER_AUTH_RETRY_PAGE'
       || message.type === 'RECOVER_STEP5_SUBMIT_RETRY_PAGE'
@@ -135,6 +136,8 @@ async function handleCommand(message) {
       return await submitAddEmailAndContinue(message.payload);
     case 'GET_STEP5_SUBMIT_STATE':
       return getStep5SubmitState();
+    case 'COMPLETE_STEP5_CHATGPT_ONBOARDING':
+      return await completeStep5ChatgptOnboarding();
     case 'PREPARE_SIGNUP_VERIFICATION':
       return await prepareSignupVerificationFlow(message.payload);
     case 'RECOVER_AUTH_RETRY_PAGE':
@@ -6548,6 +6551,114 @@ function getStep5DirectCompletionPayload({ isAgeMode = false, navigationStarted 
   return payload;
 }
 
+function getStep5OnboardingActionElements() {
+  if (typeof document === 'undefined' || !document?.querySelectorAll) {
+    return [];
+  }
+  return Array.from(document.querySelectorAll(
+    'button, a, [role="button"], [role="link"], input[type="button"], input[type="submit"]'
+  )).filter(isVisibleElement);
+}
+
+function findStep5OnboardingAction(pattern) {
+  return getStep5OnboardingActionElements().find((el) => {
+    if (!isActionEnabled(el)) {
+      return false;
+    }
+    const text = typeof getActionText === 'function'
+      ? getActionText(el)
+      : [
+        el?.textContent,
+        el?.value,
+        el?.getAttribute?.('aria-label'),
+        el?.getAttribute?.('title'),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return pattern.test(text);
+  }) || null;
+}
+
+function isStep5ChatgptOnboardingPage() {
+  const text = typeof getPageTextSnapshot === 'function'
+    ? getPageTextSnapshot()
+    : String(document?.body?.innerText || document?.body?.textContent || '').replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return false;
+  }
+
+  const hasPrompt = /what\s+brings\s+you\s+to\s+chatgpt|we['’]?ll\s+use\s+this\s+information\s+to\s+suggest\s+ideas/i.test(text);
+  const hasUseOptions = /\bSchool\b/i.test(text)
+    && /\bWork\b/i.test(text)
+    && /Personal\s+tasks/i.test(text);
+  const hasOnboardingAction = Boolean(
+    findStep5OnboardingAction(/\bskip\b/i)
+    || findStep5OnboardingAction(/\bnext\b|continue/i)
+  );
+
+  return Boolean(hasPrompt || (hasUseOptions && hasOnboardingAction));
+}
+
+async function completeStep5ChatgptOnboarding() {
+  if (!isStep5ChatgptOnboardingPage()) {
+    return null;
+  }
+
+  const performOperationWithDelay = typeof getOperationDelayRunner === 'function'
+    ? getOperationDelayRunner()
+    : async (_metadata, operation) => operation();
+
+  const skip = findStep5OnboardingAction(/\bskip\b/i);
+  if (skip) {
+    log('步骤 5：检测到 ChatGPT 用途选择页，正在点击 Skip 跳过引导...', 'warn', {
+      step: 5,
+      stepKey: 'fill-profile',
+    });
+    await humanPause(350, 900);
+    await performOperationWithDelay({ stepKey: 'fill-profile', kind: 'click', label: 'skip-chatgpt-onboarding' }, async () => {
+      simulateClick(skip);
+    });
+    await sleep(1200);
+    return {
+      state: 'chatgpt_onboarding_skipped',
+      url: location.href,
+    };
+  }
+
+  const other = findStep5OnboardingAction(/\bother\b/i);
+  if (other) {
+    log('步骤 5：检测到 ChatGPT 用途选择页，正在选择 Other...', 'warn', {
+      step: 5,
+      stepKey: 'fill-profile',
+    });
+    await humanPause(350, 900);
+    await performOperationWithDelay({ stepKey: 'fill-profile', kind: 'click', label: 'select-chatgpt-onboarding-other' }, async () => {
+      simulateClick(other);
+    });
+    await sleep(500);
+  }
+
+  const next = findStep5OnboardingAction(/\bnext\b|continue/i);
+  if (!next) {
+    return {
+      state: 'chatgpt_onboarding_detected',
+      url: location.href,
+    };
+  }
+
+  await humanPause(350, 900);
+  await performOperationWithDelay({ stepKey: 'fill-profile', kind: 'click', label: 'continue-chatgpt-onboarding' }, async () => {
+    simulateClick(next);
+  });
+  await sleep(1200);
+  return {
+    state: 'chatgpt_onboarding_continued',
+    url: location.href,
+  };
+}
+
 function isCombinedSignupVerificationProfilePage() {
   if (!isEmailVerificationPage() || !isVerificationPageStillVisible()) {
     return false;
@@ -6733,6 +6844,13 @@ function isStep5SubmitButtonClickable(button) {
 }
 
 function isStep5ProfileStillVisible() {
+  if (
+    typeof isStep5ChatgptOnboardingPage === 'function'
+    && isStep5ChatgptOnboardingPage()
+  ) {
+    return false;
+  }
+
   if (isStep5ProfilePageUrl()) {
     return true;
   }
@@ -6743,6 +6861,16 @@ function isStep5ProfileStillVisible() {
 function getStep5PostSubmitSuccessState() {
   if (getStep5AuthRetryPageState()) {
     return null;
+  }
+
+  if (
+    typeof isStep5ChatgptOnboardingPage === 'function'
+    && isStep5ChatgptOnboardingPage()
+  ) {
+    return {
+      state: 'chatgpt_onboarding',
+      url: location.href,
+    };
   }
 
   if (isStep5CompletionChatgptUrl()) {
@@ -6757,6 +6885,9 @@ function getStep5PostSubmitSuccessState() {
 
 function getStep5SubmitState() {
   const retryState = getStep5AuthRetryPageState();
+  const onboardingVisible = typeof isStep5ChatgptOnboardingPage === 'function'
+    ? isStep5ChatgptOnboardingPage()
+    : false;
   const successState = getStep5PostSubmitSuccessState();
   const errorText = typeof getStep5ErrorText === 'function' ? getStep5ErrorText() : '';
   let signupAuthHost = false;
@@ -6775,6 +6906,7 @@ function getStep5SubmitState() {
     maxCheckAttemptsBlocked: Boolean(retryState?.maxCheckAttemptsBlocked),
     userAlreadyExistsBlocked: Boolean(retryState?.userAlreadyExistsBlocked),
     successState: successState?.state || '',
+    chatgptOnboardingVisible: onboardingVisible,
     profileVisible: isStep5ProfileStillVisible(),
     errorText,
     unknownAuthPage: Boolean(
@@ -6841,6 +6973,12 @@ function installStep5NavigationCompletionReporter(completeOnce) {
     debugLog(`检测到页面开始导航（event=${eventType}）。`, {
       level: 'warn',
     });
+    if (eventType === 'pagehide') {
+      completeOnce({
+        navigationStarted: true,
+        navigationEventType: eventType,
+      });
+    }
   };
 
   window.addEventListener('pagehide', onNavigationStarted, { once: true });
@@ -6917,6 +7055,15 @@ async function waitForStep5SubmitOutcome(options = {}) {
       return successState;
     }
 
+    if (isStep5ChatgptOnboardingPage()) {
+      const onboardingResult = await completeStep5ChatgptOnboarding();
+      debugLog(`ChatGPT onboarding handled: ${onboardingResult?.state || 'unknown'}`, {
+        level: 'warn',
+      });
+      lastSubmitClickAt = Date.now();
+      continue;
+    }
+
     const step5Error = typeof getStep5ErrorText === 'function' ? getStep5ErrorText() : '';
     if (step5Error) {
       lastStep5Error = step5Error;
@@ -6958,6 +7105,11 @@ async function waitForStep5SubmitOutcome(options = {}) {
     return finalSuccessState;
   }
 
+  if (isStep5ChatgptOnboardingPage()) {
+    const onboardingResult = await completeStep5ChatgptOnboarding();
+    throw new Error(`Step 5 reached ChatGPT onboarding but has not reached chatgpt.com yet. State: ${onboardingResult?.state || 'unknown'}. URL: ${location.href}`);
+  }
+
   const finalStep5Error = (typeof getStep5ErrorText === 'function' ? getStep5ErrorText() : '') || lastStep5Error;
   if (finalStep5Error) {
     throw new Error(`步骤 5：资料提交后页面返回错误：${finalStep5Error}。URL: ${location.href}`);
@@ -6981,6 +7133,19 @@ async function step5_fillNameBirthday(payload) {
   const hasBirthdayData = [year, month, day].every(value => value != null && !Number.isNaN(Number(value)));
   if (!hasBirthdayData && (resolvedAge == null || Number.isNaN(Number(resolvedAge)))) {
     throw new Error('未提供生日或年龄数据。');
+  }
+
+  if (isStep5ChatgptOnboardingPage()) {
+    await completeStep5ChatgptOnboarding();
+    const outcome = await waitForStep5SubmitOutcome({
+      timeoutMs: 60000,
+      maxSubmitClicks: 0,
+    });
+    const completionPayload = getStep5DirectCompletionPayload({
+      outcome,
+    });
+    reportComplete(5, completionPayload);
+    return completionPayload;
   }
 
   const fullName = `${firstName} ${lastName}`;

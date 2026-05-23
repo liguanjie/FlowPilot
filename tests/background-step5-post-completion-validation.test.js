@@ -113,6 +113,8 @@ ${extractFunction('isLikelyLoggedInChatgptHomeUrl')}
 ${extractFunction('isStep5CompletionChatgptUrl')}
 ${extractFunction('getStep5SubmitStateFromContent')}
 ${extractFunction('recoverStep5SubmitRetryPageOnTab')}
+${extractFunction('completeStep5ChatgptOnboardingOnTab')}
+${extractFunction('isStep5ChatgptOnboardingState')}
 ${extractFunction('validateStep5PostCompletion')}
 
 return {
@@ -180,6 +182,8 @@ ${extractFunction('isLikelyLoggedInChatgptHomeUrl')}
 ${extractFunction('isStep5CompletionChatgptUrl')}
 ${extractFunction('getStep5SubmitStateFromContent')}
 ${extractFunction('recoverStep5SubmitRetryPageOnTab')}
+${extractFunction('completeStep5ChatgptOnboardingOnTab')}
+${extractFunction('isStep5ChatgptOnboardingState')}
 ${extractFunction('validateStep5PostCompletion')}
 
 return {
@@ -198,6 +202,98 @@ return {
   );
   assert.equal(
     api.snapshot().logs.some(({ message }) => /非 chatgpt\.com 的步骤 5 完成候选/.test(message)),
+    true
+  );
+});
+
+test('step 5 post-completion validation skips ChatGPT onboarding before marking success', async () => {
+  const api = new Function(`
+const logs = [];
+const messages = [];
+let stateReadCount = 0;
+
+const chrome = {
+  tabs: {
+    async get() {
+      return { url: 'https://chatgpt.com/' };
+    },
+  },
+};
+
+async function sendToContentScriptResilient(source, message) {
+  messages.push({ source, type: message.type });
+  if (message.type === 'GET_STEP5_SUBMIT_STATE') {
+    stateReadCount += 1;
+    if (stateReadCount === 1) {
+      return {
+        retryPage: false,
+        retryEnabled: false,
+        maxCheckAttemptsBlocked: false,
+        userAlreadyExistsBlocked: false,
+        successState: 'chatgpt_onboarding',
+        chatgptOnboardingVisible: true,
+        profileVisible: false,
+        errorText: '',
+        unknownAuthPage: false,
+        url: 'https://chatgpt.com/',
+      };
+    }
+    return {
+      retryPage: false,
+      retryEnabled: false,
+      maxCheckAttemptsBlocked: false,
+      userAlreadyExistsBlocked: false,
+      successState: 'logged_in_home',
+      chatgptOnboardingVisible: false,
+      profileVisible: false,
+      errorText: '',
+      unknownAuthPage: false,
+      url: 'https://chatgpt.com/',
+    };
+  }
+  if (message.type === 'COMPLETE_STEP5_CHATGPT_ONBOARDING') {
+    return { state: 'chatgpt_onboarding_skipped', url: 'https://chatgpt.com/' };
+  }
+  throw new Error('unexpected message type: ' + message.type);
+}
+
+async function addLog(message, level, meta) {
+  logs.push({ message, level, meta });
+}
+
+async function waitForTabStableComplete() {}
+
+${extractFunction('parseUrlSafely')}
+${extractFunction('isSignupEntryHost')}
+${extractFunction('isLikelyLoggedInChatgptHomeUrl')}
+${extractFunction('isStep5CompletionChatgptUrl')}
+${extractFunction('getStep5SubmitStateFromContent')}
+${extractFunction('recoverStep5SubmitRetryPageOnTab')}
+${extractFunction('completeStep5ChatgptOnboardingOnTab')}
+${extractFunction('isStep5ChatgptOnboardingState')}
+${extractFunction('validateStep5PostCompletion')}
+
+return {
+  async run() {
+    return validateStep5PostCompletion(99, {});
+  },
+  snapshot() {
+    return { logs, messages, stateReadCount };
+  },
+};
+`)();
+
+  const result = await api.run();
+  const snapshot = api.snapshot();
+
+  assert.equal(result.successState, 'logged_in_home');
+  assert.deepStrictEqual(
+    snapshot.messages.map(({ type }) => type),
+    ['GET_STEP5_SUBMIT_STATE', 'COMPLETE_STEP5_CHATGPT_ONBOARDING', 'GET_STEP5_SUBMIT_STATE']
+  );
+  assert.equal(snapshot.stateReadCount, 2);
+  assert.equal(
+    snapshot.logs.some(({ message }) => /用途选择页/.test(message)),
     true
   );
 });

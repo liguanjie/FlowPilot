@@ -99,8 +99,28 @@ const PERSISTED_SETTING_DEFAULTS = {
   phoneVerificationEnabled: false,
   mailProvider: '163',
   ipProxyEnabled: false,
-  ipProxyService: '711proxy',
+  ipProxyService: 'clash-verge',
   ipProxyMode: 'account',
+  ipProxyApiUrl: '',
+  ipProxyServiceProfiles: {},
+  ipProxyAccountList: '',
+  ipProxyAccountSessionPrefix: '',
+  ipProxyAccountLifeMinutes: '',
+  ipProxyPoolTargetCount: '20',
+  ipProxyHost: '',
+  ipProxyPort: '',
+  ipProxyProtocol: 'http',
+  ipProxyUsername: '',
+  ipProxyPassword: '',
+  ipProxyRegion: '',
+  clashProxySwitchEnabled: true,
+  clashProxyControlUrl: 'http://127.0.0.1:9097',
+  clashProxySecret: '',
+  clashProxyGroup: 'sushi',
+  clashProxyJapanNode: 'jp-node',
+  clashProxyJapanNodes: ['jp-node'],
+  clashProxyUsNode: 'us-node',
+  clashProxyUsNodes: ['us-node'],
   kiroRsUrl: '',
   kiroRsKey: '',
   stepExecutionRangeByFlow: {},
@@ -136,7 +156,7 @@ function normalizeCloudflareTempEmailDomains(value) { return Array.isArray(value
 function normalizeCloudMailDomains(value) { return Array.isArray(value) ? value : []; }
 function normalizeMailProvider(value = '') { return String(value || '163').trim().toLowerCase() || '163'; }
 function normalizeStepExecutionRangeByFlow(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
-function normalizeIpProxyProviderValue(value) { return String(value || '711proxy').trim() || '711proxy'; }
+function normalizeIpProxyProviderValue(value) { return String(value || 'clash-verge').trim() || 'clash-verge'; }
 function normalizeIpProxyMode(value) { return String(value || 'account').trim() || 'account'; }
 function normalizeIpProxyServiceProfiles(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function buildIpProxyServiceProfileFromState() {
@@ -161,6 +181,17 @@ function normalizeIpProxyAccountLifeMinutes(value) { return String(value || '');
 function normalizeIpProxyPoolTargetCount(value) { return String(value || '20'); }
 function normalizeIpProxyPort(value) { return String(value || '').trim(); }
 function normalizeIpProxyProtocol(value) { return String(value || 'http').trim() || 'http'; }
+self.MultiPageClashProxyControl = {
+  normalizeClashProxyControlUrl(value, fallback = 'http://127.0.0.1:9097') {
+    return String(value || fallback).trim().replace(/\\/+$/g, '') || fallback;
+  },
+  normalizeClashProxyNodePool(value, fallback = '') {
+    const raw = Array.isArray(value) ? value : String(value || '').split(/[\\n,，;；]+/g);
+    const nodes = raw.map((entry) => String(entry || '').trim()).filter(Boolean);
+    const fallbackNode = String(fallback || '').trim();
+    return nodes.length ? nodes : (fallbackNode ? [fallbackNode] : []);
+  },
+};
 function resolveSignupMethod(state = {}) {
   const activeFlowId = String(state?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
   if (activeFlowId === 'kiro') {
@@ -212,6 +243,49 @@ test('buildPersistentSettingsPayload writes canonical settings schema into persi
     payload.settingsState.flows.kiro.targets['kiro-rs'].baseUrl,
     'https://kiro.example.com/admin'
   );
+});
+
+test('buildPersistentSettingsPayload includes Clash Verge proxy settings in persisted payloads', () => {
+  const api = buildHarness();
+
+  const payload = api.buildPersistentSettingsPayload({
+    ipProxyEnabled: true,
+    ipProxyService: 'clash-verge',
+    ipProxyMode: 'account',
+    ipProxyServiceProfiles: {
+      'clash-verge': {
+        mode: 'account',
+        host: '127.0.0.1',
+        port: '7897',
+        protocol: 'http',
+      },
+    },
+    clashProxySwitchEnabled: true,
+    clashProxyControlUrl: 'http://127.0.0.1:9097',
+    clashProxySecret: 'secret-token',
+    clashProxyGroup: 'sushi',
+    clashProxyJapanNode: 'jp-home',
+    clashProxyJapanNodes: ['jp-home', 'jp-backup'],
+    clashProxyUsNode: 'us-home',
+    clashProxyUsNodes: ['us-home', 'us-backup'],
+  }, { fillDefaults: true });
+
+  assert.equal(payload.ipProxyEnabled, true);
+  assert.equal(payload.ipProxyService, 'clash-verge');
+  assert.equal(payload.ipProxyMode, 'account');
+  assert.equal(payload.ipProxyHost, '127.0.0.1');
+  assert.equal(payload.ipProxyPort, '7897');
+  assert.equal(payload.ipProxyProtocol, 'http');
+  assert.equal(payload.clashProxySwitchEnabled, true);
+  assert.equal(payload.clashProxyControlUrl, 'http://127.0.0.1:9097');
+  assert.equal(payload.clashProxySecret, 'secret-token');
+  assert.equal(payload.clashProxyGroup, 'sushi');
+  assert.equal(payload.clashProxyJapanNode, 'jp-home');
+  assert.deepEqual(payload.clashProxyJapanNodes, ['jp-home', 'jp-backup']);
+  assert.equal(payload.clashProxyUsNode, 'us-home');
+  assert.deepEqual(payload.clashProxyUsNodes, ['us-home', 'us-backup']);
+  assert.deepEqual(payload.settingsState.services.proxy.clash.japanNodes, ['jp-home', 'jp-backup']);
+  assert.deepEqual(payload.settingsState.services.proxy.clash.usNodes, ['us-home', 'us-backup']);
 });
 
 test('buildPersistentSettingsPayload accepts schema-only input when requireKnownKeys is enabled', () => {

@@ -27,6 +27,7 @@ importScripts(
   'background/paypal-account-store.js',
   'background/ip-proxy-provider-711proxy.js',
   'background/ip-proxy-core.js',
+  'background/clash-proxy-control.js',
   'background/sub2api-api.js',
   'background/cpa-api.js',
   'background/panel-bridge.js',
@@ -575,9 +576,10 @@ const DEFAULT_SUB2API_GROUP_NAMES = [
   CONTRIBUTION_SUB2API_PLUS_GROUP_NAME,
 ];
 const DEFAULT_SUB2API_REDIRECT_URI = 'http://localhost:1455/auth/callback';
-const DEFAULT_IP_PROXY_SERVICE = '711proxy';
-const IP_PROXY_SERVICE_VALUES = ['711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
-const IP_PROXY_ENABLED_SERVICE_VALUES = ['711proxy'];
+const CLASH_VERGE_IP_PROXY_SERVICE = 'clash-verge';
+const DEFAULT_IP_PROXY_SERVICE = CLASH_VERGE_IP_PROXY_SERVICE;
+const IP_PROXY_SERVICE_VALUES = [CLASH_VERGE_IP_PROXY_SERVICE, '711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
+const IP_PROXY_ENABLED_SERVICE_VALUES = [CLASH_VERGE_IP_PROXY_SERVICE, '711proxy'];
 const DEFAULT_IP_PROXY_MODE = 'account';
 const IP_PROXY_MODE_VALUES = ['api', 'account'];
 const DEFAULT_IP_PROXY_PROTOCOL = 'http';
@@ -1280,6 +1282,14 @@ const PERSISTED_SETTING_DEFAULTS = {
   ipProxyUsername: '',
   ipProxyPassword: '',
   ipProxyRegion: '',
+  clashProxySwitchEnabled: true,
+  clashProxyControlUrl: self.MultiPageClashProxyControl?.DEFAULT_CLASH_PROXY_CONTROL_URL || 'http://127.0.0.1:9097',
+  clashProxySecret: '',
+  clashProxyGroup: '寿司云',
+  clashProxyJapanNode: '日本 07',
+  clashProxyJapanNodes: ['日本 07'],
+  clashProxyUsNode: '美国 01',
+  clashProxyUsNodes: ['美国 01'],
   codex2apiUrl: DEFAULT_CODEX2API_URL,
   codex2apiAdminKey: '',
   customPassword: '',
@@ -1469,6 +1479,14 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'ipProxyEnabled',
   'ipProxyService',
   'ipProxyMode',
+  'clashProxySwitchEnabled',
+  'clashProxyControlUrl',
+  'clashProxySecret',
+  'clashProxyGroup',
+  'clashProxyJapanNode',
+  'clashProxyJapanNodes',
+  'clashProxyUsNode',
+  'clashProxyUsNodes',
   'kiroRsUrl',
   'kiroRsKey',
   'stepExecutionRangeByFlow',
@@ -1543,6 +1561,25 @@ const DEFAULT_STATE = {
   ipProxyAppliedExitDetecting: false,
   ipProxyAppliedExitError: '',
   ipProxyAppliedExitSource: '',
+  clashProxyLastRegion: '',
+  clashProxyLastNode: '',
+  clashProxyLastGroup: '',
+  clashProxyLastSwitchedAt: 0,
+  clashProxyLastError: '',
+  clashProxyLastJapanProbeIp: '',
+  clashProxyLastJapanProbeRegion: '',
+  clashProxyLastJapanProbeNode: '',
+  clashProxyLastJapanProbeAt: 0,
+  clashProxyLastJapanProbeMatched: false,
+  clashProxyLastJapanProbeError: '',
+  clashProxyLastJapanProbeDiagnostic: '',
+  clashProxyLastUsProbeIp: '',
+  clashProxyLastUsProbeRegion: '',
+  clashProxyLastUsProbeNode: '',
+  clashProxyLastUsProbeAt: 0,
+  clashProxyLastUsProbeMatched: false,
+  clashProxyLastUsProbeError: '',
+  clashProxyLastUsProbeDiagnostic: '',
 };
 
 function normalizeAutoRunDelayMinutes(value) {
@@ -3192,6 +3229,31 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '');
     case 'ipProxyRegion':
       return String(value || '').trim();
+    case 'clashProxySwitchEnabled':
+      return Boolean(value);
+    case 'clashProxyControlUrl':
+      return self.MultiPageClashProxyControl?.normalizeClashProxyControlUrl
+        ? self.MultiPageClashProxyControl.normalizeClashProxyControlUrl(
+          value,
+          PERSISTED_SETTING_DEFAULTS.clashProxyControlUrl
+        )
+        : String(value || PERSISTED_SETTING_DEFAULTS.clashProxyControlUrl).trim().replace(/\/+$/g, '');
+    case 'clashProxySecret':
+      return String(value || '');
+    case 'clashProxyGroup':
+      return String(value || '').trim();
+    case 'clashProxyJapanNode':
+      return String(value || '').trim();
+    case 'clashProxyJapanNodes':
+      return self.MultiPageClashProxyControl?.normalizeClashProxyNodePool
+        ? self.MultiPageClashProxyControl.normalizeClashProxyNodePool(value, '')
+        : (Array.isArray(value) ? value.map((entry) => String(entry || '').trim()).filter(Boolean) : []);
+    case 'clashProxyUsNode':
+      return String(value || '').trim();
+    case 'clashProxyUsNodes':
+      return self.MultiPageClashProxyControl?.normalizeClashProxyNodePool
+        ? self.MultiPageClashProxyControl.normalizeClashProxyNodePool(value, '')
+        : (Array.isArray(value) ? value.map((entry) => String(entry || '').trim()).filter(Boolean) : []);
     case 'ipProxyApiPool':
       return normalizeProxyPoolEntries(
         value,
@@ -3571,6 +3633,18 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
       normalizedInput.verificationResendCount = legacyVerificationResendCount;
     }
   }
+  if (normalizedInput.clashProxyJapanNodes === undefined && normalizedInput.clashProxyJapanNode !== undefined) {
+    normalizedInput.clashProxyJapanNodes = [normalizedInput.clashProxyJapanNode];
+  }
+  if (normalizedInput.clashProxyJapanNode === undefined && Array.isArray(normalizedInput.clashProxyJapanNodes)) {
+    normalizedInput.clashProxyJapanNode = normalizedInput.clashProxyJapanNodes[0] || '';
+  }
+  if (normalizedInput.clashProxyUsNodes === undefined && normalizedInput.clashProxyUsNode !== undefined) {
+    normalizedInput.clashProxyUsNodes = [normalizedInput.clashProxyUsNode];
+  }
+  if (normalizedInput.clashProxyUsNode === undefined && Array.isArray(normalizedInput.clashProxyUsNodes)) {
+    normalizedInput.clashProxyUsNode = normalizedInput.clashProxyUsNodes[0] || '';
+  }
 
   const isPlainObjectForSettingsSchema = typeof isPlainObjectValue === 'function'
     ? isPlainObjectValue
@@ -3809,6 +3883,14 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('ipProxyEnabled', ['services', 'proxy', 'enabled']);
   assignIfUpdated('ipProxyService', ['services', 'proxy', 'provider']);
   assignIfUpdated('ipProxyMode', ['services', 'proxy', 'mode']);
+  assignIfUpdated('clashProxySwitchEnabled', ['services', 'proxy', 'clash', 'switchEnabled']);
+  assignIfUpdated('clashProxyControlUrl', ['services', 'proxy', 'clash', 'controlUrl']);
+  assignIfUpdated('clashProxySecret', ['services', 'proxy', 'clash', 'secret']);
+  assignIfUpdated('clashProxyGroup', ['services', 'proxy', 'clash', 'group']);
+  assignIfUpdated('clashProxyJapanNode', ['services', 'proxy', 'clash', 'japanNode']);
+  assignIfUpdated('clashProxyJapanNodes', ['services', 'proxy', 'clash', 'japanNodes']);
+  assignIfUpdated('clashProxyUsNode', ['services', 'proxy', 'clash', 'usNode']);
+  assignIfUpdated('clashProxyUsNodes', ['services', 'proxy', 'clash', 'usNodes']);
   assignIfUpdated('kiroRsUrl', ['flows', 'kiro', 'targets', 'kiro-rs', 'baseUrl']);
   assignIfUpdated('kiroRsKey', ['flows', 'kiro', 'targets', 'kiro-rs', 'apiKey']);
 
@@ -4274,9 +4356,31 @@ async function importSettingsBundle(configBundle) {
     settingsSchemaApi: typeof getSettingsSchemaApi === 'function' ? getSettingsSchemaApi() : null,
     defaultFlowId: DEFAULT_ACTIVE_FLOW_ID,
   }) || null;
-  const importedSettingsSource = typeof settingsImporter?.importSettings === 'function'
+  const importedFlatSettings = {};
+  const persistedFlatImportKeys = (
+    typeof PERSISTED_SETTING_KEYS !== 'undefined'
+    && Array.isArray(PERSISTED_SETTING_KEYS)
+  ) ? PERSISTED_SETTING_KEYS : [];
+  const settingsSchemaViewKeySet = (
+    typeof SETTINGS_SCHEMA_VIEW_KEY_SET !== 'undefined'
+    && SETTINGS_SCHEMA_VIEW_KEY_SET
+    && typeof SETTINGS_SCHEMA_VIEW_KEY_SET.has === 'function'
+  ) ? SETTINGS_SCHEMA_VIEW_KEY_SET : new Set();
+  for (const key of persistedFlatImportKeys) {
+    if (settingsSchemaViewKeySet.has(key)) {
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(configBundle.settings, key)) {
+      importedFlatSettings[key] = configBundle.settings[key];
+    }
+  }
+
+  const importedSettingsSource = {
+    ...importedFlatSettings,
+    ...(typeof settingsImporter?.importSettings === 'function'
     ? settingsImporter.importSettings(configBundle.settings)
-    : configBundle.settings;
+      : configBundle.settings),
+  };
   const importedSettings = buildPersistentSettingsPayload(importedSettingsSource, {
     fillDefaults: true,
     requireKnownKeys: true,
@@ -11505,6 +11609,424 @@ const STEP_FETCH_NETWORK_RETRY_POLICIES = new Map([
   [9, { maxAttempts: 3, cooldownMs: 12000 }],
 ]);
 
+const CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS = 360;
+const CLASH_PROXY_REGION_VERIFY_RETRY_DELAY_MS = 10000;
+const CLASH_PROXY_MANUAL_REGION_PROBE_MAX_ATTEMPTS = 8;
+const CLASH_PROXY_MANUAL_REGION_PROBE_RETRY_DELAY_MS = 3000;
+
+function normalizeClashProxyExitRegion(value = '') {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isClashProxyExitRegionMatched(expectedRegion = '', detectedRegion = '') {
+  const expected = normalizeClashProxyExitRegion(expectedRegion);
+  const detected = normalizeClashProxyExitRegion(detectedRegion);
+  return Boolean(expected && detected && expected === detected);
+}
+
+function buildClashProxyManualInterventionError(region, lastProbe = {}) {
+  const expected = normalizeClashProxyExitRegion(region) || String(region || '').trim();
+  const detectedRegion = normalizeClashProxyExitRegion(
+    lastProbe?.exitRegion || lastProbe?.region || ''
+  );
+  const detectedIp = String(lastProbe?.exitIp || lastProbe?.ip || '').trim();
+  const detectedText = detectedIp || detectedRegion
+    ? `${detectedIp || 'unknown IP'}${detectedRegion ? ` / ${detectedRegion}` : ''}`
+    : '未检测到可用出口';
+  const error = String(lastProbe?.exitError || lastProbe?.error || '').trim();
+  const errorSuffix = error ? `；最后错误：${error}` : '';
+  return new Error(
+    `Clash 自动切节点后出口国家仍不符合流程标记：期望 ${expected}，实际 ${detectedText}${errorSuffix}。`
+    + ` 已重试 ${CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS} 次（约 1 小时），请人工检查 Clash 节点、代理组、控制端口和本地端口 7897。`
+  );
+}
+
+async function refreshClashProxySubscriptionsForAutoRunRound(context = {}) {
+  const state = await getState();
+  const api = self.MultiPageClashProxyControl;
+  if (!state?.ipProxyEnabled || state?.ipProxyService !== CLASH_VERGE_IP_PROXY_SERVICE || !state?.clashProxySwitchEnabled) {
+    return { skipped: true, reason: 'clash_proxy_disabled' };
+  }
+  if (!api?.refreshClashProxyProviders) {
+    return { skipped: true, reason: 'clash_provider_refresh_unavailable' };
+  }
+  try {
+    const result = await api.refreshClashProxyProviders(state, {
+      fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+    });
+    const refreshedCount = Number(result?.refreshedCount) || 0;
+    const failedCount = Array.isArray(result?.failures) ? result.failures.length : 0;
+    const suffix = failedCount > 0 ? `，${failedCount} 个订阅刷新失败但流程继续` : '';
+    await addLog(
+      `第 ${Number(context?.targetRun) || state?.autoRunCurrentRun || 1} 轮开始前已刷新 Clash 订阅：${refreshedCount} 个${suffix}。`,
+      failedCount > 0 ? 'warn' : 'info'
+    );
+    return result;
+  } catch (error) {
+    const message = getErrorMessage(error);
+    await addLog(`第 ${Number(context?.targetRun) || state?.autoRunCurrentRun || 1} 轮开始前刷新 Clash 订阅失败，流程继续：${message}`, 'warn');
+    return { ok: false, error: message };
+  }
+}
+
+async function probeClashProxyExitForRegion(state = {}) {
+  if (typeof probeIpProxyExit !== 'function') {
+    throw new Error('缺少出口 IP 检测能力，无法校验 Clash 节点国家。');
+  }
+  const probe = await probeIpProxyExit({
+    state,
+    timeoutMs: 12000,
+    authRebindMaxAttempts: 0,
+  });
+  const latestState = await getState();
+  const detectedRegion = normalizeClashProxyExitRegion(
+    probe?.exitRegion || probe?.proxyRouting?.exitRegion || latestState?.ipProxyAppliedExitRegion
+  );
+  const detectedIp = String(probe?.exitIp || probe?.proxyRouting?.exitIp || latestState?.ipProxyAppliedExitIp || '').trim();
+  return {
+    probe: probe || {},
+    state: latestState || state || {},
+    detectedRegion,
+    detectedIp,
+  };
+}
+
+function buildClashProxyRegionProbeUpdates(region = '', result = {}) {
+  const normalizedRegion = normalizeClashProxyExitRegion(region);
+  const prefix = normalizedRegion === 'US' ? 'Us' : 'Japan';
+  const matched = Boolean(result?.matched);
+  const error = String(result?.error || '').trim();
+  const diagnostic = String(result?.diagnostic || '').trim();
+  return {
+    [`clashProxyLast${prefix}ProbeIp`]: String(result?.exitIp || '').trim(),
+    [`clashProxyLast${prefix}ProbeRegion`]: String(result?.exitRegion || '').trim(),
+    [`clashProxyLast${prefix}ProbeNode`]: String(result?.node || '').trim(),
+    [`clashProxyLast${prefix}ProbeAt`]: Date.now(),
+    [`clashProxyLast${prefix}ProbeMatched`]: matched,
+    [`clashProxyLast${prefix}ProbeError`]: matched ? '' : error,
+    [`clashProxyLast${prefix}ProbeDiagnostic`]: diagnostic,
+  };
+}
+
+function formatClashProxyConnectionSummary(connection = {}) {
+  if (!connection) {
+    return '';
+  }
+  const destination = String(connection?.destination || connection?.host || '').trim();
+  const chain = String(connection?.chainText || '').trim();
+  const rule = [connection?.rule, connection?.rulePayload]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join('/');
+  const pieces = [
+    destination ? `连接 ${destination}` : '',
+    chain ? `链路 ${chain}` : '',
+    rule ? `规则 ${rule}` : '',
+  ].filter(Boolean);
+  return pieces.join('，');
+}
+
+function formatClashProxyDiagnosticsSummary(diagnostics = {}) {
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return '';
+  }
+  const groupStatus = diagnostics.groupStatus || {};
+  const connectionSnapshot = diagnostics.connectionSnapshot || {};
+  const group = String(groupStatus.group || groupStatus.name || '').trim();
+  const now = String(groupStatus.now || '').trim();
+  const probeConnection = connectionSnapshot.probeConnection
+    || (Array.isArray(connectionSnapshot.probeConnections) ? connectionSnapshot.probeConnections[0] : null);
+  const recentConnection = !probeConnection && Array.isArray(connectionSnapshot.recentConnections)
+    ? connectionSnapshot.recentConnections[0]
+    : null;
+  const selectedText = group || now
+    ? `Clash 当前选择：${group || 'unknown group'}${now ? ` -> ${now}` : ''}`
+    : '';
+  const probeText = formatClashProxyConnectionSummary(probeConnection);
+  const recentText = !probeText ? formatClashProxyConnectionSummary(recentConnection) : '';
+  const errorText = Array.isArray(diagnostics.errors) && diagnostics.errors.length
+    ? `诊断错误：${diagnostics.errors.join('；')}`
+    : '';
+  return [selectedText, probeText ? `检测连接：${probeText}` : '', recentText ? `最近连接：${recentText}` : '', errorText]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function fetchClashProxyDiagnosticsSummary(state = {}) {
+  const api = self.MultiPageClashProxyControl;
+  if (!api?.fetchClashProxyDiagnostics) {
+    return '';
+  }
+  try {
+    const diagnostics = await api.fetchClashProxyDiagnostics(state, {
+      fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+    });
+    return formatClashProxyDiagnosticsSummary(diagnostics);
+  } catch (error) {
+    return `诊断错误：${getErrorMessage(error)}`;
+  }
+}
+
+async function probeClashProxyRegionExit(region = '', overrides = {}) {
+  const api = self.MultiPageClashProxyControl;
+  const normalizedRegion = normalizeClashProxyExitRegion(region);
+  if (normalizedRegion !== 'JP' && normalizedRegion !== 'US') {
+    throw new Error('Clash 出口检测缺少有效地区：JP / US。');
+  }
+  if (!api?.switchClashProxyForRegion) {
+    throw new Error('Clash Verge 节点切换能力尚未接入。');
+  }
+
+  const currentState = await getState();
+  const probeState = {
+    ...(currentState || {}),
+    ...(overrides || {}),
+    ipProxyEnabled: true,
+    ipProxyService: CLASH_VERGE_IP_PROXY_SERVICE,
+    clashProxySwitchEnabled: true,
+  };
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      60,
+      Number(overrides?.maxAttempts) || CLASH_PROXY_MANUAL_REGION_PROBE_MAX_ATTEMPTS
+    )
+  );
+  const retryDelayMs = Math.max(
+    0,
+    Math.min(
+      30000,
+      Number(overrides?.retryDelayMs) || CLASH_PROXY_MANUAL_REGION_PROBE_RETRY_DELAY_MS
+    )
+  );
+  let attempt = 1;
+  let switchResult = null;
+  let proxyRouting = {};
+  let exitRegion = '';
+  let exitIp = '';
+  let matched = false;
+  let error = '';
+  let diagnostic = '';
+
+  while (attempt <= maxAttempts) {
+    switchResult = await api.switchClashProxyForRegion(normalizedRegion, probeState, {
+      fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+      roundIndex: 1,
+      nodeOffset: attempt - 1,
+    });
+    if (!switchResult || switchResult.skipped) {
+      throw new Error('Clash 出口检测未执行节点切换，请确认已启用 IP 代理与 Clash 切节点。');
+    }
+
+    const routedState = {
+      ...probeState,
+      ipProxyService: CLASH_VERGE_IP_PROXY_SERVICE,
+      clashProxySwitchEnabled: true,
+      ipProxyHost: '127.0.0.1',
+      ipProxyPort: '7897',
+      ipProxyProtocol: 'http',
+      ipProxyUsername: '',
+      ipProxyPassword: '',
+      ipProxyRegion: switchResult.region || normalizedRegion,
+      ipProxyAppliedRegion: switchResult.region || normalizedRegion,
+    };
+    const appliedRouting = await applyIpProxySettingsFromState(routedState, {
+      skipExitProbe: true,
+      resetNetworkState: false,
+      forceAuthRebind: false,
+      suppressAuthRebind: true,
+    });
+    if (!appliedRouting?.applied) {
+      throw new Error(appliedRouting?.error || 'FlowPilot 未能接管浏览器代理到本地 Clash 端口。');
+    }
+
+    if (retryDelayMs > 0) {
+      await sleepWithStop(retryDelayMs);
+    }
+
+    const probeResult = await probeClashProxyExitForRegion(routedState);
+    proxyRouting = probeResult?.probe?.proxyRouting || {};
+    exitRegion = probeResult.detectedRegion
+      || normalizeClashProxyExitRegion(proxyRouting?.exitRegion || '');
+    exitIp = probeResult.detectedIp
+      || String(proxyRouting?.exitIp || '').trim();
+    matched = isClashProxyExitRegionMatched(normalizedRegion, exitRegion);
+    error = matched
+      ? ''
+      : `期望 ${normalizedRegion}，实际 ${exitIp || 'unknown IP'}${exitRegion ? ` / ${exitRegion}` : ''}`;
+    if (!matched || attempt > 1) {
+      diagnostic = await fetchClashProxyDiagnosticsSummary({
+        ...routedState,
+        clashProxyGroup: switchResult?.group || routedState.clashProxyGroup,
+      });
+    }
+
+    if (matched) {
+      break;
+    }
+
+    attempt += 1;
+  }
+  const updates = {
+    clashProxyLastRegion: switchResult?.region || normalizedRegion,
+    clashProxyLastNode: switchResult?.node || '',
+    clashProxyLastGroup: switchResult?.group || '',
+    clashProxyLastSwitchedAt: Date.now(),
+    clashProxyLastError: matched ? '' : error,
+    ...buildClashProxyRegionProbeUpdates(normalizedRegion, {
+      matched,
+      exitIp,
+      exitRegion,
+      node: switchResult?.node || '',
+      error,
+      diagnostic,
+    }),
+  };
+  await setState(updates);
+  broadcastDataUpdate(updates);
+
+  return {
+    ok: true,
+    region: normalizedRegion,
+    matched,
+    attempts: attempt,
+    maxAttempts,
+    exitIp,
+    exitRegion,
+    diagnostic,
+    group: switchResult?.group || '',
+    node: switchResult?.node || '',
+    proxyRouting: {
+      ...proxyRouting,
+      region: switchResult?.region || normalizedRegion,
+      exitIp,
+      exitRegion,
+    },
+    ...updates,
+  };
+}
+
+async function ensureClashProxyForExecutionStep(step, nodeId, state = {}) {
+  const api = self.MultiPageClashProxyControl;
+  if (!api?.ensureClashProxyForStep) {
+    return state;
+  }
+
+  try {
+    let attempt = 1;
+    let latestState = state;
+    let lastResult = null;
+    let lastProbe = null;
+
+    const expectedRegion = api.resolveClashProxyRegionForStep?.(step, latestState) || '';
+    if (!expectedRegion) {
+      return latestState;
+    }
+
+    const initialProbe = await probeClashProxyExitForRegion(latestState);
+    lastProbe = initialProbe.probe;
+    latestState = initialProbe.state;
+    if (isClashProxyExitRegionMatched(expectedRegion, initialProbe.detectedRegion)) {
+      await addLog(
+        `Clash 出口国家已符合 ${expectedRegion}，出口 IP ${initialProbe.detectedIp || 'unknown'} / ${initialProbe.detectedRegion}`,
+        'info',
+        { nodeId }
+      );
+      return latestState;
+    }
+
+    while (attempt <= CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS) {
+      const roundIndex = Number(latestState?.autoRunCurrentRun || state?.autoRunCurrentRun || 1) || 1;
+      const result = await api.ensureClashProxyForStep(step, latestState, {
+        fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+        roundIndex,
+        nodeOffset: attempt - 1,
+      });
+      if (!result || result.skipped) {
+        return latestState;
+      }
+      lastResult = result;
+
+      const routedState = {
+        ...latestState,
+        ipProxyService: CLASH_VERGE_IP_PROXY_SERVICE,
+        clashProxySwitchEnabled: true,
+        ipProxyHost: '127.0.0.1',
+        ipProxyPort: '7897',
+        ipProxyProtocol: 'http',
+        ipProxyUsername: '',
+        ipProxyPassword: '',
+        ipProxyRegion: result.region || '',
+        ipProxyAppliedRegion: result.region || '',
+      };
+      const proxyRouting = await applyIpProxySettingsFromState(routedState, {
+        skipExitProbe: true,
+        resetNetworkState: false,
+        forceAuthRebind: false,
+        suppressAuthRebind: true,
+      });
+      if (!proxyRouting?.applied) {
+        throw new Error(proxyRouting?.error || 'FlowPilot 未能接管浏览器代理到本地 Clash 端口。');
+      }
+
+      const probeResult = await probeClashProxyExitForRegion(latestState);
+      lastProbe = probeResult.probe;
+      latestState = probeResult.state;
+      const detectedRegion = probeResult.detectedRegion;
+      const detectedIp = probeResult.detectedIp;
+      if (isClashProxyExitRegionMatched(result.region, detectedRegion)) {
+        const updates = {
+          clashProxyLastRegion: result.region || '',
+          clashProxyLastNode: result.node || '',
+          clashProxyLastGroup: result.group || '',
+          clashProxyLastSwitchedAt: Date.now(),
+          clashProxyLastError: '',
+        };
+        await setState(updates);
+        broadcastDataUpdate(updates);
+        await addLog(
+          `Clash 节点已切换到 ${result.region}：${result.node}，出口 IP ${detectedIp || 'unknown'} / ${detectedRegion}`,
+          'info',
+          { nodeId }
+        );
+        return {
+          ...latestState,
+          ...updates,
+        };
+      }
+
+      const diagnostic = await fetchClashProxyDiagnosticsSummary({
+        ...routedState,
+        clashProxyGroup: result.group || routedState.clashProxyGroup,
+      });
+      const diagnosticSuffix = diagnostic
+        ? ` 诊断：${diagnostic.replace(/\n+/g, '；')}`
+        : '';
+      await addLog(
+        `Clash 出口国家检测未通过（${attempt}/${CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS}）：期望 ${result.region}，实际 ${detectedIp || 'unknown'} / ${detectedRegion || 'unknown'}，10 秒后重新切换检测。${diagnosticSuffix}`,
+        'warn',
+        { nodeId }
+      );
+      if (attempt < CLASH_PROXY_REGION_VERIFY_MAX_ATTEMPTS) {
+        await sleepWithStop(CLASH_PROXY_REGION_VERIFY_RETRY_DELAY_MS);
+      }
+      attempt += 1;
+    }
+
+    throw buildClashProxyManualInterventionError(lastResult?.region || '', lastProbe || {});
+  } catch (error) {
+    const message = getErrorMessage(error);
+    const updates = {
+      clashProxyLastError: message,
+    };
+    await setState(updates);
+    broadcastDataUpdate(updates);
+    await addLog(`Clash 自动切节点/出口校验失败：${message}`, 'error', { nodeId });
+    throw error;
+  }
+}
+
 async function executeNode(nodeId, options = {}) {
   const { deferRetryableTransportError = false } = options;
   const normalizedNodeId = String(nodeId || '').trim();
@@ -11527,6 +12049,7 @@ async function executeNode(nodeId, options = {}) {
   try {
     await setNodeStatus(normalizedNodeId, 'running');
     await addLog('开始执行', 'info', { nodeId: normalizedNodeId });
+    state = await ensureClashProxyForExecutionStep(step, normalizedNodeId, state);
     await humanStepDelay();
     const fetchRetryPolicy = typeof getStepFetchNetworkRetryPolicy === 'function'
       ? getStepFetchNetworkRetryPolicy(step)
@@ -12052,6 +12575,9 @@ function resolveIpProxyCandidateCountForAutoSwitch(state = {}, mode = 'account',
   const normalizedProvider = typeof normalizeIpProxyProviderValue === 'function'
     ? normalizeIpProxyProviderValue(provider)
     : String(provider || DEFAULT_IP_PROXY_SERVICE).trim().toLowerCase();
+  if (normalizedProvider === CLASH_VERGE_IP_PROXY_SERVICE) {
+    return 1;
+  }
   if (normalizedMode === 'account' && typeof getAccountModeProxyPoolFromState === 'function') {
     const pool = getAccountModeProxyPoolFromState(state, normalizedProvider);
     return Array.isArray(pool) ? pool.length : 0;
@@ -12371,6 +12897,7 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   clearStopRequest: () => clearStopRequest(),
   createAutoRunSessionId: () => createAutoRunSessionId(),
   ensureHotmailMailboxReadyForAutoRunRound: (...args) => ensureHotmailMailboxReadyForAutoRunRound(...args),
+  refreshClashProxySubscriptionsForAutoRunRound: (...args) => refreshClashProxySubscriptionsForAutoRunRound(...args),
   getAutoRunStatusPayload,
   getErrorMessage,
   getFirstUnfinishedNodeId,
@@ -13618,6 +14145,7 @@ const step5Executor = self.MultiPageBackgroundStep5?.createStep5Executor({
   generateRandomBirthday,
   generateRandomName,
   sendToContentScript,
+  sendToContentScriptResilient,
 });
 const step6Executor = self.MultiPageBackgroundStep6?.createStep6Executor({
   addLog,
@@ -14046,6 +14574,35 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   exportSettingsBundle,
   fetchGeneratedEmail,
   refreshGpcCardBalance,
+  getClashProxyOptions: async (overrides = {}) => {
+    const api = self.MultiPageClashProxyControl;
+    if (!api?.fetchClashProxyOptions) {
+      throw new Error('Clash Verge 节点读取能力尚未接入。');
+    }
+    const state = await getState();
+    return api.fetchClashProxyOptions({
+      ...(state || {}),
+      ...(overrides || {}),
+    }, {
+      fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+    });
+  },
+  probeClashProxyRegionExit: async (region = '', overrides = {}) => (
+    probeClashProxyRegionExit(region, overrides || {})
+  ),
+  refreshClashProxyProvidersForConfig: async (overrides = {}) => {
+    const api = self.MultiPageClashProxyControl;
+    if (!api?.refreshClashProxyProviders) {
+      throw new Error('Clash Verge 订阅刷新能力尚未接入。');
+    }
+    const state = await getState();
+    return api.refreshClashProxyProviders({
+      ...(state || {}),
+      ...(overrides || {}),
+    }, {
+      fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
+    });
+  },
   finalizePhoneActivationAfterSuccessfulFlow,
   testKiroRsConnection: async (baseUrl, apiKey) => {
     if (typeof self.MultiPageBackgroundKiroPublisherKiroRs?.checkKiroRsConnection !== 'function') {
@@ -14892,6 +15449,40 @@ async function recoverStep5SubmitRetryPageOnTab(options = {}) {
   return result || {};
 }
 
+async function completeStep5ChatgptOnboardingOnTab(options = {}) {
+  const result = await sendToContentScriptResilient(
+    'openai-auth',
+    {
+      type: 'COMPLETE_STEP5_CHATGPT_ONBOARDING',
+      source: 'background',
+      payload: {},
+    },
+    {
+      timeoutMs: options.timeoutMs ?? 15000,
+      retryDelayMs: options.retryDelayMs ?? 600,
+      responseTimeoutMs: options.responseTimeoutMs ?? (options.timeoutMs ?? 15000),
+      logMessage: options.logMessage || '步骤 5：已进入 ChatGPT 引导页，正在尝试跳过用途选择...',
+      logStep: 5,
+      logStepKey: options.logStepKey || 'fill-profile',
+    }
+  );
+
+  if (result?.error) {
+    throw new Error(result.error);
+  }
+
+  return result || {};
+}
+
+function isStep5ChatgptOnboardingState(pageState = {}) {
+  return Boolean(
+    pageState?.chatgptOnboardingVisible
+    || pageState?.onboardingVisible
+    || pageState?.successState === 'chatgpt_onboarding'
+    || pageState?.state === 'chatgpt_onboarding'
+  );
+}
+
 async function addStep5PostCompletionDebugLog(message, details = {}) {
   const pageState = details?.pageState && typeof details.pageState === 'object'
     ? details.pageState
@@ -14906,6 +15497,7 @@ async function addStep5PostCompletionDebugLog(message, details = {}) {
     pageState ? `retryPage=${Boolean(pageState.retryPage)}` : null,
     pageState ? `retryEnabled=${Boolean(pageState.retryEnabled)}` : null,
     pageState ? `successState=${pageState.successState || 'none'}` : null,
+    pageState ? `chatgptOnboardingVisible=${Boolean(pageState.chatgptOnboardingVisible)}` : null,
     pageState ? `profileVisible=${Boolean(pageState.profileVisible)}` : null,
     pageState ? `unknownAuthPage=${Boolean(pageState.unknownAuthPage)}` : null,
     pageState ? `maxCheckAttemptsBlocked=${Boolean(pageState.maxCheckAttemptsBlocked)}` : null,
@@ -14947,20 +15539,6 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
   while (true) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     const currentUrl = String(tab?.url || completionPayload?.url || '').trim();
-    if (currentUrl && isStep5CompletionChatgptUrl(currentUrl)) {
-      await debugLog('后台直接通过标签页 URL 确认已进入 chatgpt.com，步骤 5 完成。', {
-        completionOutcome: String(completionPayload?.outcome || '').trim(),
-        completionUrl: String(completionPayload?.url || '').trim(),
-        navigationStarted: Boolean(completionPayload?.navigationStarted),
-        tabUrl: currentUrl,
-        level: 'ok',
-      });
-      return {
-        successState: 'logged_in_home',
-        url: currentUrl,
-      };
-    }
-
     const pageState = await getStep5SubmitStateFromContent({
       timeoutMs: 15000,
       responseTimeoutMs: 15000,
@@ -14980,6 +15558,29 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
     }
     if (pageState.maxCheckAttemptsBlocked) {
       throw new Error('AUTH_MAX_CHECK_ATTEMPTS::max_check_attempts on step 5 auth retry page; restart the current auth step without clicking Retry.');
+    }
+
+    if (isStep5ChatgptOnboardingState(pageState)) {
+      await debugLog('后台复核检测到 ChatGPT 用途选择页，准备点击 Skip 跳过引导。', {
+        completionOutcome: String(completionPayload?.outcome || '').trim(),
+        completionUrl: String(completionPayload?.url || '').trim(),
+        navigationStarted: Boolean(completionPayload?.navigationStarted),
+        tabUrl: currentUrl,
+        pageState,
+        level: 'warn',
+      });
+      await completeStep5ChatgptOnboardingOnTab({
+        timeoutMs: 15000,
+        retryDelayMs: 600,
+        logMessage: '步骤 5：正在跳过 ChatGPT 用途选择引导页...',
+      });
+      await waitForTabStableComplete(tabId, {
+        timeoutMs: 30000,
+        retryDelayMs: 300,
+        stableMs: 1000,
+        initialDelayMs: 300,
+      }).catch(() => null);
+      continue;
     }
 
     if (pageState.retryPage) {
@@ -15011,6 +15612,21 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
         initialDelayMs: 300,
       }).catch(() => null);
       continue;
+    }
+
+    if (currentUrl && isStep5CompletionChatgptUrl(currentUrl)) {
+      await debugLog('后台通过标签页 URL 确认已进入 chatgpt.com，步骤 5 完成。', {
+        completionOutcome: String(completionPayload?.outcome || '').trim(),
+        completionUrl: String(completionPayload?.url || '').trim(),
+        navigationStarted: Boolean(completionPayload?.navigationStarted),
+        tabUrl: currentUrl,
+        pageState,
+        level: 'ok',
+      });
+      return {
+        successState: 'logged_in_home',
+        url: currentUrl,
+      };
     }
 
     if (pageState.successState === 'logged_in_home' && isStep5CompletionChatgptUrl(pageState.url)) {

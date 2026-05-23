@@ -10,12 +10,17 @@ function normalizeIpProxyService(value = '') {
   return DEFAULT_IP_PROXY_SERVICE;
 }
 
+function isClashVergeIpProxyService(service = '') {
+  return String(service || '').trim().toLowerCase() === 'clash-verge';
+}
+
 const ipProxyActionState = {
   busy: false,
   action: '',
   startedAt: 0,
 };
 const IP_PROXY_ACTION_LOCK_TIMEOUT_MS = 25000;
+const IP_PROXY_REGION_PROBE_ACTION_LOCK_TIMEOUT_MS = 180000;
 let ipProxyDeferredProbeTimer = 0;
 const IP_PROXY_SECTION_EXPANDED_STORAGE_KEY = 'multipage-ip-proxy-section-expanded';
 let ipProxySectionExpanded = false;
@@ -70,6 +75,8 @@ function getIpProxyActionLabel(action = '') {
   if (normalized === 'next') return '切换代理';
   if (normalized === 'change') return '会话换出口';
   if (normalized === 'probe') return '检测出口';
+  if (normalized === 'probe-jp') return '检测 JP 出口';
+  if (normalized === 'probe-us') return '检测 US 出口';
   return '代理操作';
 }
 
@@ -91,6 +98,14 @@ function setIpProxyActionBusy(action = '', busy = false) {
   ipProxyActionState.startedAt = ipProxyActionState.busy ? Date.now() : 0;
 }
 
+function getIpProxyActionLockTimeoutMs(action = '') {
+  const normalized = normalizeIpProxyActionType(action);
+  if (normalized === 'probe-jp' || normalized === 'probe-us') {
+    return IP_PROXY_REGION_PROBE_ACTION_LOCK_TIMEOUT_MS;
+  }
+  return IP_PROXY_ACTION_LOCK_TIMEOUT_MS;
+}
+
 async function runIpProxyActionWithLock(action = '', runner) {
   if (typeof runner !== 'function') {
     throw new Error('代理操作执行器无效。');
@@ -110,7 +125,7 @@ async function runIpProxyActionWithLock(action = '', runner) {
   }
 
   const actionLabel = getIpProxyActionLabel(nextAction);
-  const timeoutMs = Math.max(5000, Number(IP_PROXY_ACTION_LOCK_TIMEOUT_MS) || 25000);
+  const timeoutMs = Math.max(5000, Number(getIpProxyActionLockTimeoutMs(nextAction)) || 25000);
   let timeoutId = 0;
   try {
     const value = await Promise.race([
@@ -453,6 +468,26 @@ function buildIpProxyServiceProfilesPatch(selectedService = '', state = latestSt
 function buildIpProxyStatePatchFromServiceProfile(service = '', profile = {}) {
   const normalizedService = normalizeIpProxyService(service || DEFAULT_IP_PROXY_SERVICE);
   const normalizedProfile = normalizeIpProxyServiceProfile(profile);
+  if (isClashVergeIpProxyService(normalizedService)) {
+    return {
+      ipProxyService: normalizedService,
+      ipProxyMode: 'account',
+      ipProxyApiUrl: '',
+      ipProxyAccountList: '',
+      ipProxyAccountSessionPrefix: '',
+      ipProxyAccountLifeMinutes: '',
+      ipProxyPoolTargetCount: normalizedProfile.poolTargetCount,
+      ipProxyAutoSyncEnabled: false,
+      ipProxyAutoSyncIntervalMinutes: Number.parseInt(String(normalizedProfile.autoSyncIntervalMinutes || '15').trim(), 10) || 15,
+      ipProxyHost: '127.0.0.1',
+      ipProxyPort: '7897',
+      ipProxyProtocol: 'http',
+      ipProxyUsername: '',
+      ipProxyPassword: '',
+      ipProxyRegion: '',
+      clashProxySwitchEnabled: true,
+    };
+  }
   return {
     ipProxyService: normalizedService,
     ipProxyMode: normalizedProfile.mode,
@@ -572,6 +607,27 @@ function getIpProxyRuntimeFieldNames(mode = DEFAULT_IP_PROXY_MODE) {
 function getIpProxyRuntimeSnapshot(state = latestState, mode = normalizeIpProxyModeForCurrentRelease(state?.ipProxyMode)) {
   const normalizedMode = normalizeIpProxyModeForCurrentRelease(mode);
   const fields = getIpProxyRuntimeFieldNames(normalizedMode);
+  if (isClashVergeIpProxyService(state?.ipProxyService)) {
+    return {
+      mode: normalizedMode,
+      ...fields,
+      hasModePool: false,
+      hasModeCurrent: true,
+      hasModeIndex: false,
+      hasAccountListConfigured: false,
+      pool: [],
+      current: {
+        host: '127.0.0.1',
+        port: 7897,
+        username: '',
+        password: '',
+        protocol: 'http',
+        region: String(state?.clashProxyLastRegion || state?.ipProxyAppliedExitRegion || '').trim(),
+        provider: 'clash-verge',
+      },
+      index: 0,
+    };
+  }
   const hasAccountListConfigured = normalizedMode === 'account'
     && normalizeIpProxyAccountList(state?.ipProxyAccountList || '').split('\n').filter(Boolean).length > 0;
   const hasModePool = Array.isArray(state?.[fields.poolKey]);
@@ -621,6 +677,17 @@ function buildIpProxyRuntimeStatePatchForMode(mode = DEFAULT_IP_PROXY_MODE, resp
 
 function getIpProxyCurrentEntry(state = latestState) {
   const mode = normalizeIpProxyModeForCurrentRelease(state?.ipProxyMode);
+  if (isClashVergeIpProxyService(state?.ipProxyService)) {
+    return {
+      host: '127.0.0.1',
+      port: 7897,
+      username: '',
+      password: '',
+      protocol: 'http',
+      region: String(state?.clashProxyLastRegion || '').trim(),
+      provider: 'clash-verge',
+    };
+  }
   if (mode === 'account') {
     const runtime = getIpProxyRuntimeSnapshot(state, mode);
     const poolEntry = runtime.hasModePool && runtime.pool.length
@@ -696,6 +763,9 @@ function shouldAutoSync711SessionFieldsForPanel(state = latestState) {
   const service = normalizeIpProxyService(
     selectIpProxyService?.value || state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE
   );
+  if (isClashVergeIpProxyService(service)) {
+    return false;
+  }
   const mode = normalizeIpProxyModeForCurrentRelease(getSelectedIpProxyMode());
   if (service !== '711proxy' || mode !== 'account') {
     return false;
@@ -945,6 +1015,9 @@ function canChangeIpProxyExitWithCurrentSession(state = latestState) {
   const service = normalizeIpProxyService(
     selectIpProxyService?.value || state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE
   );
+  if (isClashVergeIpProxyService(service)) {
+    return false;
+  }
   if (mode !== 'account' || service !== '711proxy') {
     return false;
   }
@@ -955,6 +1028,10 @@ function canChangeIpProxyExitWithCurrentSession(state = latestState) {
 
 function buildIpProxyActionHintText(options = {}) {
   const mode = normalizeIpProxyModeForCurrentRelease(options?.mode || DEFAULT_IP_PROXY_MODE);
+  const service = normalizeIpProxyService(options?.service || selectIpProxyService?.value || latestState?.ipProxyService || DEFAULT_IP_PROXY_SERVICE);
+  if (isClashVergeIpProxyService(service)) {
+    return 'Clash Verge：执行流程时自动切 JP / US（1-7 JP，8+ US）；手动可用“检测出口”确认当前出口。';
+  }
   const poolCount = Math.max(0, Number(options?.poolCount) || 0);
   const changeAvailable = Boolean(options?.changeAvailable);
   const dynamicPoolCount = poolCount > 0 ? poolCount : 1;
@@ -983,6 +1060,13 @@ function setIpProxyCurrentDisplay(text = '', hasValue = false) {
 }
 
 function formatIpProxyCurrentDisplay(state = latestState) {
+  if (isClashVergeIpProxyService(state?.ipProxyService)) {
+    const region = String(state?.clashProxyLastRegion || state?.ipProxyAppliedExitRegion || '').trim();
+    return {
+      text: `Clash Verge 本地服务：127.0.0.1:7897${region ? ` [${region}]` : ''}`,
+      hasValue: true,
+    };
+  }
   const mode = normalizeIpProxyModeForCurrentRelease(state?.ipProxyMode);
   if (mode === 'account') {
     const current = getIpProxyCurrentEntry(state);
@@ -1042,6 +1126,7 @@ function buildIpProxyCurrentDisplayText(display = {}, runtimeStatus = {}) {
 
 function formatIpProxyRuntimeStatus(state = latestState) {
   const enabled = Boolean(state?.ipProxyEnabled);
+  const service = normalizeIpProxyService(state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE);
   const mode = normalizeIpProxyModeForCurrentRelease(state?.ipProxyMode);
   const hasAccountListConfigured = mode === 'account'
     && normalizeIpProxyAccountList(state?.ipProxyAccountList || '').split('\n').filter(Boolean).length > 0;
@@ -1102,12 +1187,98 @@ function formatIpProxyRuntimeStatus(state = latestState) {
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .join('\n');
+  const formatClashProbeSummary = (label, probe = {}) => {
+    const ip = String(probe?.ip || '').trim();
+    const regionValue = String(probe?.region || '').trim();
+    const node = String(probe?.node || '').trim();
+    const at = Number(probe?.at) || 0;
+    const matched = Boolean(probe?.matched);
+    const probeError = String(probe?.error || '').trim();
+    const diagnostic = String(probe?.diagnostic || '').trim();
+    if (!at && !ip && !regionValue && !probeError && !diagnostic) {
+      return `${label} 检测：未检测`;
+    }
+    const status = matched ? '通过' : '不匹配';
+    const exit = ip || regionValue
+      ? `${ip || 'unknown IP'}${regionValue ? ` / ${regionValue}` : ''}`
+      : '未检测到出口';
+    const nodeText = node ? `，节点：${node}` : '';
+    const errorSuffix = !matched && probeError ? `，${probeError}` : '';
+    const diagnosticSuffix = diagnostic ? `\n${label} 诊断：${diagnostic}` : '';
+    return `${label} 检测：${status}，${exit}${nodeText}${errorSuffix}${diagnosticSuffix}`;
+  };
 
   if (!enabled) {
     return {
       stateClass: 'state-idle',
       text: '未启用，沿用浏览器默认/全局代理。',
       details: '',
+      hideCurrentDisplay: false,
+    };
+  }
+
+  if (isClashVergeIpProxyService(service)) {
+    const jpNodes = typeof normalizeClashProxyNodeList === 'function'
+      ? normalizeClashProxyNodeList(state?.clashProxyJapanNodes, state?.clashProxyJapanNode)
+      : [String(state?.clashProxyJapanNode || '').trim()].filter(Boolean);
+    const usNodes = typeof normalizeClashProxyNodeList === 'function'
+      ? normalizeClashProxyNodeList(state?.clashProxyUsNodes, state?.clashProxyUsNode)
+      : [String(state?.clashProxyUsNode || '').trim()].filter(Boolean);
+    const clashDetails = [
+      `Clash 控制地址：${String(state?.clashProxyControlUrl || 'http://127.0.0.1:9097').trim()}`,
+      `代理组：${String(state?.clashProxyGroup || '').trim() || '未设置'}`,
+      `JP 节点池：${jpNodes.length ? jpNodes.join(' / ') : '未设置'}`,
+      `US 节点池：${usNodes.length ? usNodes.join(' / ') : '未设置'}`,
+      formatClashProbeSummary('JP', {
+        ip: state?.clashProxyLastJapanProbeIp,
+        region: state?.clashProxyLastJapanProbeRegion,
+        node: state?.clashProxyLastJapanProbeNode,
+        at: state?.clashProxyLastJapanProbeAt,
+        matched: state?.clashProxyLastJapanProbeMatched,
+        error: state?.clashProxyLastJapanProbeError,
+        diagnostic: state?.clashProxyLastJapanProbeDiagnostic,
+      }),
+      formatClashProbeSummary('US', {
+        ip: state?.clashProxyLastUsProbeIp,
+        region: state?.clashProxyLastUsProbeRegion,
+        node: state?.clashProxyLastUsProbeNode,
+        at: state?.clashProxyLastUsProbeAt,
+        matched: state?.clashProxyLastUsProbeMatched,
+        error: state?.clashProxyLastUsProbeError,
+        diagnostic: state?.clashProxyLastUsProbeDiagnostic,
+      }),
+      errorText,
+      warningText,
+      exitError,
+    ].map((item) => String(item || '').trim()).filter(Boolean).join('\n');
+    if (applied) {
+      return {
+        stateClass: warningText ? 'state-warning' : 'state-applied',
+        text: `已接管到 Clash Verge 本地服务：127.0.0.1:7897；当前出口：${exitSummary}`,
+        details: clashDetails,
+        hideCurrentDisplay: true,
+      };
+    }
+    if (reason === 'missing_proxy_entry') {
+      return {
+        stateClass: 'state-warning',
+        text: '已启用 Clash Verge 本地服务，请确认 Clash Verge 端口 7897 与外部控制已开启。',
+        details: clashDetails,
+        hideCurrentDisplay: false,
+      };
+    }
+    if (reason === 'apply_failed' || reason === 'proxy_api_unavailable') {
+      return {
+        stateClass: 'state-error',
+        text: 'Clash Verge 本地服务接管失败，请检查浏览器代理权限和 Clash Verge 端口。',
+        details: clashDetails,
+        hideCurrentDisplay: false,
+      };
+    }
+    return {
+      stateClass: 'state-warning',
+      text: 'Clash Verge 本地服务已启用，等待检测出口。',
+      details: clashDetails,
       hideCurrentDisplay: false,
     };
   }
@@ -1257,17 +1428,26 @@ function updateIpProxyUI(state = latestState) {
   const showSettings = enabled && ipProxySectionExpanded;
   const mode = getSelectedIpProxyMode();
   const service = normalizeIpProxyService(selectIpProxyService?.value || state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE);
+  const isClashVergeService = isClashVergeIpProxyService(service);
   const apiModeAvailable = isIpProxyApiModeAvailable();
   const accountListAvailable = isIpProxyAccountListAvailable();
   const isApiMode = mode === 'api' && apiModeAvailable;
   const isAccountMode = mode === 'account';
-  const showSessionOptions = isAccountMode && service === '711proxy';
-  const hasAccountListConfigured = accountListAvailable && isAccountMode && hasCurrentInputAccountListEntries();
+  const showManualProxyFields = !isClashVergeService && isAccountMode;
+  const showSessionOptions = showManualProxyFields && service === '711proxy';
+  const hasAccountListConfigured = accountListAvailable && showManualProxyFields && hasCurrentInputAccountListEntries();
   const canOperate = !isAutoRunLockedPhase() && !isAutoRunScheduledPhase();
   const actionState = getIpProxyActionState();
   const actionBusy = Boolean(actionState.busy);
   const busyAction = normalizeIpProxyActionType(actionState.action);
   const runtimeState = state || latestState || {};
+  const clashSwitchEnabled = Boolean(
+    typeof inputClashProxySwitchEnabled !== 'undefined'
+    && inputClashProxySwitchEnabled
+      ? inputClashProxySwitchEnabled.checked
+      : runtimeState?.clashProxySwitchEnabled
+  );
+  const showClashSettings = showSettings && (isClashVergeService || clashSwitchEnabled);
 
   if (rowIpProxyEnabled) {
     rowIpProxyEnabled.style.display = '';
@@ -1287,16 +1467,16 @@ function updateIpProxyUI(state = latestState) {
     rowIpProxyService.style.display = showSettings ? '' : 'none';
   }
   if (rowIpProxyMode) {
-    rowIpProxyMode.style.display = showSettings ? '' : 'none';
+    rowIpProxyMode.style.display = showSettings && !isClashVergeService ? '' : 'none';
   }
   if (rowIpProxyLayout) {
     rowIpProxyLayout.style.display = showSettings ? '' : 'none';
   }
   if (rowIpProxyApiUrl) {
-    rowIpProxyApiUrl.style.display = showSettings && apiModeAvailable && isApiMode ? '' : 'none';
+    rowIpProxyApiUrl.style.display = showSettings && !isClashVergeService && apiModeAvailable && isApiMode ? '' : 'none';
   }
   if (rowIpProxyAccountList) {
-    rowIpProxyAccountList.style.display = showSettings && isAccountMode && accountListAvailable ? '' : 'none';
+    rowIpProxyAccountList.style.display = showSettings && showManualProxyFields && accountListAvailable ? '' : 'none';
   }
   if (rowIpProxyAccountSessionPrefix) {
     rowIpProxyAccountSessionPrefix.style.display = showSettings && showSessionOptions ? '' : 'none';
@@ -1305,34 +1485,47 @@ function updateIpProxyUI(state = latestState) {
     rowIpProxyAccountLifeMinutes.style.display = showSettings && showSessionOptions ? '' : 'none';
   }
   if (rowIpProxyPoolTargetCount) {
-    rowIpProxyPoolTargetCount.style.display = showSettings ? '' : 'none';
+    rowIpProxyPoolTargetCount.style.display = showSettings && !isClashVergeService ? '' : 'none';
   }
-  const autoSyncEnabledRow = typeof rowIpProxyAutoSyncEnabled !== 'undefined' ? rowIpProxyAutoSyncEnabled : null;
+    const autoSyncEnabledRow = typeof rowIpProxyAutoSyncEnabled !== 'undefined' ? rowIpProxyAutoSyncEnabled : null;
   const autoSyncIntervalRow = typeof rowIpProxyAutoSyncInterval !== 'undefined' ? rowIpProxyAutoSyncInterval : null;
   if (autoSyncEnabledRow) {
-    autoSyncEnabledRow.style.display = showSettings ? '' : 'none';
+    autoSyncEnabledRow.style.display = showSettings && !isClashVergeService ? '' : 'none';
   }
   if (autoSyncIntervalRow) {
-    autoSyncIntervalRow.style.display = showSettings ? '' : 'none';
+    autoSyncIntervalRow.style.display = showSettings && !isClashVergeService ? '' : 'none';
   }
   if (rowIpProxyHost) {
-    rowIpProxyHost.style.display = showSettings && isAccountMode ? '' : 'none';
+    rowIpProxyHost.style.display = showSettings && showManualProxyFields ? '' : 'none';
   }
   if (rowIpProxyPort) {
-    rowIpProxyPort.style.display = showSettings && isAccountMode ? '' : 'none';
+    rowIpProxyPort.style.display = showSettings && showManualProxyFields ? '' : 'none';
   }
   if (rowIpProxyProtocol) {
-    rowIpProxyProtocol.style.display = showSettings ? '' : 'none';
+    rowIpProxyProtocol.style.display = showSettings && !isClashVergeService ? '' : 'none';
   }
   if (rowIpProxyUsername) {
-    rowIpProxyUsername.style.display = showSettings && isAccountMode ? '' : 'none';
+    rowIpProxyUsername.style.display = showSettings && showManualProxyFields ? '' : 'none';
   }
   if (rowIpProxyPassword) {
-    rowIpProxyPassword.style.display = showSettings && isAccountMode ? '' : 'none';
+    rowIpProxyPassword.style.display = showSettings && showManualProxyFields ? '' : 'none';
   }
   if (rowIpProxyRegion) {
-    rowIpProxyRegion.style.display = showSettings && isAccountMode ? '' : 'none';
+    rowIpProxyRegion.style.display = showSettings && showManualProxyFields ? '' : 'none';
   }
+  if (typeof rowClashProxySwitchEnabled !== 'undefined' && rowClashProxySwitchEnabled) {
+    rowClashProxySwitchEnabled.style.display = showSettings && !isClashVergeService ? '' : 'none';
+  }
+  [
+    typeof rowClashProxyControlUrl !== 'undefined' ? rowClashProxyControlUrl : null,
+    typeof rowClashProxySecret !== 'undefined' ? rowClashProxySecret : null,
+    typeof rowClashProxyGroup !== 'undefined' ? rowClashProxyGroup : null,
+    typeof rowClashProxyNodes !== 'undefined' ? rowClashProxyNodes : null,
+  ].forEach((row) => {
+    if (row) {
+      row.style.display = showClashSettings ? '' : 'none';
+    }
+  });
   if (rowIpProxyActions) {
     rowIpProxyActions.style.display = showSettings ? '' : 'none';
   }
@@ -1347,7 +1540,7 @@ function updateIpProxyUI(state = latestState) {
   }
   if (selectIpProxyService) {
     selectIpProxyService.value = service;
-    selectIpProxyService.disabled = true;
+    selectIpProxyService.disabled = !enabled;
   }
   if (typeof updateIpProxyServiceLoginButtonState === 'function') {
     updateIpProxyServiceLoginButtonState({
@@ -1358,7 +1551,7 @@ function updateIpProxyUI(state = latestState) {
   ipProxyModeButtons.forEach((button) => {
     const buttonMode = normalizeIpProxyMode(button?.dataset?.ipProxyMode || DEFAULT_IP_PROXY_MODE);
     const apiButton = buttonMode === 'api';
-    button.disabled = apiButton && !apiModeAvailable;
+    button.disabled = isClashVergeService || (apiButton && !apiModeAvailable);
     if (apiButton) {
       button.hidden = false;
     }
@@ -1367,7 +1560,7 @@ function updateIpProxyUI(state = latestState) {
     ipProxyApiPanel.classList.toggle('is-disabled', !apiModeAvailable);
     ipProxyApiPanel.setAttribute('aria-disabled', String(!apiModeAvailable));
     ipProxyApiPanel.hidden = !apiModeAvailable;
-    ipProxyApiPanel.style.display = showSettings && apiModeAvailable ? '' : 'none';
+    ipProxyApiPanel.style.display = showSettings && !isClashVergeService && apiModeAvailable ? '' : 'none';
   }
   if (inputIpProxyApiUrl) {
     inputIpProxyApiUrl.disabled = !enabled || !apiModeAvailable;
@@ -1376,49 +1569,70 @@ function updateIpProxyUI(state = latestState) {
     btnToggleIpProxyApiUrl.disabled = !enabled || !apiModeAvailable;
   }
   if (inputIpProxyHost) {
-    inputIpProxyHost.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyHost.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (inputIpProxyPort) {
-    inputIpProxyPort.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyPort.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (selectIpProxyProtocol) {
-    selectIpProxyProtocol.disabled = !enabled || (isAccountMode && hasAccountListConfigured);
+    selectIpProxyProtocol.disabled = !enabled || isClashVergeService || (isAccountMode && hasAccountListConfigured);
   }
   if (inputIpProxyUsername) {
-    inputIpProxyUsername.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyUsername.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (inputIpProxyPassword) {
-    inputIpProxyPassword.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyPassword.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (btnToggleIpProxyUsername) {
-    btnToggleIpProxyUsername.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    btnToggleIpProxyUsername.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (btnToggleIpProxyPassword) {
-    btnToggleIpProxyPassword.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    btnToggleIpProxyPassword.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (inputIpProxyRegion) {
-    inputIpProxyRegion.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyRegion.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
+  if (typeof inputClashProxySwitchEnabled !== 'undefined' && inputClashProxySwitchEnabled) {
+    if (isClashVergeService) {
+      inputClashProxySwitchEnabled.checked = true;
+    }
+    inputClashProxySwitchEnabled.disabled = !enabled;
+  }
+  [
+    typeof inputClashProxyControlUrl !== 'undefined' ? inputClashProxyControlUrl : null,
+    typeof inputClashProxySecret !== 'undefined' ? inputClashProxySecret : null,
+    typeof inputClashProxyGroup !== 'undefined' ? inputClashProxyGroup : null,
+    typeof btnRefreshClashProxyOptions !== 'undefined' ? btnRefreshClashProxyOptions : null,
+    typeof inputClashProxyJapanNodeFilter !== 'undefined' ? inputClashProxyJapanNodeFilter : null,
+    typeof inputClashProxyUsNodeFilter !== 'undefined' ? inputClashProxyUsNodeFilter : null,
+    typeof inputClashProxyJapanNode !== 'undefined' ? inputClashProxyJapanNode : null,
+    typeof inputClashProxyUsNode !== 'undefined' ? inputClashProxyUsNode : null,
+    typeof btnToggleClashProxySecret !== 'undefined' ? btnToggleClashProxySecret : null,
+  ].forEach((control) => {
+    if (control) {
+      control.disabled = !enabled || !clashSwitchEnabled;
+    }
+  });
   if (inputIpProxyAccountSessionPrefix) {
-    inputIpProxyAccountSessionPrefix.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyAccountSessionPrefix.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (inputIpProxyAccountLifeMinutes) {
-    inputIpProxyAccountLifeMinutes.disabled = !enabled || !isAccountMode || hasAccountListConfigured;
+    inputIpProxyAccountLifeMinutes.disabled = !enabled || !showManualProxyFields || hasAccountListConfigured;
   }
   if (inputIpProxyAccountList) {
-    inputIpProxyAccountList.disabled = !enabled || !isAccountMode || !accountListAvailable;
+    inputIpProxyAccountList.disabled = !enabled || !showManualProxyFields || !accountListAvailable;
   }
   const autoSyncEnabledInput = typeof inputIpProxyAutoSyncEnabled !== 'undefined' ? inputIpProxyAutoSyncEnabled : null;
   const autoSyncIntervalInput = typeof inputIpProxyAutoSyncIntervalMinutes !== 'undefined' ? inputIpProxyAutoSyncIntervalMinutes : null;
   if (autoSyncEnabledInput) {
-    autoSyncEnabledInput.disabled = !enabled;
+    autoSyncEnabledInput.disabled = !enabled || isClashVergeService;
   }
   if (autoSyncIntervalInput) {
     const autoSyncEnabled = Boolean(autoSyncEnabledInput?.checked);
     if (!Number.isFinite(Number.parseInt(String(autoSyncIntervalInput.value || '').trim(), 10))) {
       autoSyncIntervalInput.value = '15';
     }
-    autoSyncIntervalInput.disabled = !enabled || !autoSyncEnabled;
+    autoSyncIntervalInput.disabled = !enabled || isClashVergeService || !autoSyncEnabled;
   }
 
   const runtimeStatus = formatIpProxyRuntimeStatus(runtimeState);
@@ -1436,34 +1650,52 @@ function updateIpProxyUI(state = latestState) {
     : `当前仅 ${runtimePoolCountForDisplay} 条节点：重绑当前节点并复测连通性（不保证更换出口）`;
 
   if (btnIpProxyRefresh) {
-    btnIpProxyRefresh.disabled = actionBusy || !enabled || !canOperate;
+    btnIpProxyRefresh.hidden = isClashVergeService;
+    btnIpProxyRefresh.disabled = actionBusy || !enabled || !canOperate || isClashVergeService;
     btnIpProxyRefresh.textContent = busyAction === 'refresh'
       ? (isApiMode ? '拉取中...' : '同步中...')
       : (isApiMode ? '拉取' : '同步');
     btnIpProxyRefresh.title = isApiMode ? '拉取代理池并应用当前代理' : '同步账号代理列表并应用当前代理';
   }
   if (btnIpProxyNext) {
-    btnIpProxyNext.disabled = actionBusy || !enabled || !canOperate || !hasCurrentEntry;
+    btnIpProxyNext.hidden = isClashVergeService;
+    btnIpProxyNext.disabled = actionBusy || !enabled || !canOperate || !hasCurrentEntry || isClashVergeService;
     btnIpProxyNext.textContent = busyAction === 'next' ? '切换中...' : '下一条';
     btnIpProxyNext.title = nextActionTitle;
   }
   if (btnIpProxyChange) {
-    btnIpProxyChange.disabled = actionBusy || !enabled || !canOperate || !changeAvailable;
+    btnIpProxyChange.hidden = isClashVergeService;
+    btnIpProxyChange.disabled = actionBusy || !enabled || !canOperate || !changeAvailable || isClashVergeService;
     btnIpProxyChange.textContent = busyAction === 'change' ? 'Change中...' : 'Change';
     btnIpProxyChange.title = changeAvailable
       ? '保持当前会话并刷新出口（仅 711 + session）'
       : '当前模式不支持 Change（需 711 账号模式且用户名包含 session）';
   }
   if (btnIpProxyProbe) {
-    btnIpProxyProbe.disabled = actionBusy || !enabled || !canOperate;
+    btnIpProxyProbe.hidden = isClashVergeService;
+    btnIpProxyProbe.disabled = actionBusy || !enabled || !canOperate || isClashVergeService;
     btnIpProxyProbe.textContent = busyAction === 'probe' ? '检测中...' : '检测出口';
+  }
+  if (typeof btnIpProxyProbeJp !== 'undefined' && btnIpProxyProbeJp) {
+    btnIpProxyProbeJp.hidden = !isClashVergeService;
+    btnIpProxyProbeJp.disabled = actionBusy || !enabled || !canOperate || !isClashVergeService;
+    btnIpProxyProbeJp.textContent = busyAction === 'probe-jp' ? '检测 JP 中...' : '检测 JP';
+    btnIpProxyProbeJp.title = '切换到 JP 节点池并检测出口是否为 JP';
+  }
+  if (typeof btnIpProxyProbeUs !== 'undefined' && btnIpProxyProbeUs) {
+    btnIpProxyProbeUs.hidden = !isClashVergeService;
+    btnIpProxyProbeUs.disabled = actionBusy || !enabled || !canOperate || !isClashVergeService;
+    btnIpProxyProbeUs.textContent = busyAction === 'probe-us' ? '检测 US 中...' : '检测 US';
+    btnIpProxyProbeUs.title = '切换到 US 节点池并检测出口是否为 US';
   }
   if (btnIpProxyCheckIp) {
     btnIpProxyCheckIp.disabled = false;
     btnIpProxyCheckIp.title = '打开公网 IP 检测页';
   }
   if (ipProxyActionHint) {
-    const actionHint = buildIpProxyActionHintText({
+    const actionHint = isClashVergeService
+      ? 'Clash Verge：请分别检测 JP / US；执行流程时会按步骤地区自动切换并校验（1-7 JP，8+ US）。'
+      : buildIpProxyActionHintText({
       mode,
       poolCount: runtimePoolCount,
       changeAvailable,
@@ -1630,7 +1862,40 @@ async function probeIpProxyExit(options = {}) {
     throw new Error(response.error);
   }
   const routing = response?.proxyRouting || {};
-  syncLatestState({
+  applyIpProxyRoutingResponseToState(response);
+  updateIpProxyUI(latestState);
+
+  if (!silent) {
+    const exitIp = String(routing?.exitIp || '').trim();
+    const exitRegion = String(routing?.exitRegion || '').trim();
+    const exitSource = String(routing?.exitSource || '').trim().toLowerCase();
+    const sourceHint = exitSource === 'background_fallback'
+      ? '（后台兜底，可能受全局代理影响）'
+      : '';
+    if (exitIp) {
+      showToast(`出口检测成功：${exitIp}${exitRegion ? ` [${exitRegion}]` : ''}${sourceHint}`, 'success', 2600);
+    } else {
+      showToast('出口检测完成，但未获取到出口 IP', 'warn', 2200);
+    }
+  }
+  return response;
+}
+
+function getSelectedClashProxyNodesForProbe(select) {
+  if (!select) {
+    return [];
+  }
+  if (typeof getSelectSelectedValues === 'function') {
+    return getSelectSelectedValues(select);
+  }
+  return Array.from(select.selectedOptions || [])
+    .map((option) => String(option?.value || '').trim())
+    .filter(Boolean);
+}
+
+function applyIpProxyRoutingResponseToState(response = {}) {
+  const routing = response?.proxyRouting || {};
+  const patch = {
     ipProxyApplied: Boolean(routing.applied),
     ipProxyAppliedReason: String(routing.reason || '').trim().toLowerCase(),
     ipProxyAppliedHost: String(routing.host || '').trim(),
@@ -1646,20 +1911,92 @@ async function probeIpProxyExit(options = {}) {
     ipProxyAppliedExitError: String(routing.exitError || '').trim(),
     ipProxyAppliedExitSource: String(routing.exitSource || '').trim().toLowerCase(),
     ipProxyAppliedAt: Date.now(),
+    clashProxyLastRegion: String(response?.clashProxyLastRegion || response?.region || '').trim(),
+    clashProxyLastNode: String(response?.clashProxyLastNode || response?.node || '').trim(),
+    clashProxyLastGroup: String(response?.clashProxyLastGroup || response?.group || '').trim(),
+    clashProxyLastSwitchedAt: Number(response?.clashProxyLastSwitchedAt) || Date.now(),
+    clashProxyLastError: String(response?.clashProxyLastError || '').trim(),
+  };
+  [
+    'clashProxyLastJapanProbeIp',
+    'clashProxyLastJapanProbeRegion',
+    'clashProxyLastJapanProbeNode',
+    'clashProxyLastJapanProbeAt',
+    'clashProxyLastJapanProbeMatched',
+    'clashProxyLastJapanProbeError',
+    'clashProxyLastJapanProbeDiagnostic',
+    'clashProxyLastUsProbeIp',
+    'clashProxyLastUsProbeRegion',
+    'clashProxyLastUsProbeNode',
+    'clashProxyLastUsProbeAt',
+    'clashProxyLastUsProbeMatched',
+    'clashProxyLastUsProbeError',
+    'clashProxyLastUsProbeDiagnostic',
+  ].forEach((key) => {
+    if (response?.[key] !== undefined) {
+      patch[key] = key.endsWith('At')
+        ? Number(response[key]) || 0
+        : (key.endsWith('Matched') ? Boolean(response[key]) : String(response[key] || '').trim());
+    }
   });
+  syncLatestState(patch);
+}
+
+async function probeClashProxyRegionExit(region = '', options = {}) {
+  const { silent = false } = options;
+  const normalizedRegion = String(region || '').trim().toUpperCase();
+  if (normalizedRegion !== 'JP' && normalizedRegion !== 'US') {
+    throw new Error('请选择要检测的 Clash 出口地区：JP 或 US。');
+  }
+  const japanNodes = getSelectedClashProxyNodesForProbe(
+    typeof inputClashProxyJapanNode !== 'undefined' ? inputClashProxyJapanNode : null
+  );
+  const usNodes = getSelectedClashProxyNodesForProbe(
+    typeof inputClashProxyUsNode !== 'undefined' ? inputClashProxyUsNode : null
+  );
+  const sendMessage = typeof sendSidepanelMessage === 'function'
+    ? sendSidepanelMessage
+    : (message) => chrome.runtime.sendMessage(message);
+  const response = await sendMessage({
+    type: 'PROBE_CLASH_PROXY_REGION_EXIT',
+    source: 'sidepanel',
+    payload: {
+      region: normalizedRegion,
+      maxAttempts: 8,
+      retryDelayMs: 3000,
+      clashProxyControlUrl: typeof inputClashProxyControlUrl !== 'undefined'
+        ? String(inputClashProxyControlUrl?.value || '').trim()
+        : undefined,
+      clashProxySecret: typeof inputClashProxySecret !== 'undefined'
+        ? String(inputClashProxySecret?.value || '')
+        : undefined,
+      clashProxyGroup: typeof inputClashProxyGroup !== 'undefined'
+        ? String(inputClashProxyGroup?.value || '').trim()
+        : undefined,
+      clashProxyJapanNode: japanNodes[0] || '',
+      clashProxyJapanNodes: japanNodes,
+      clashProxyUsNode: usNodes[0] || '',
+      clashProxyUsNodes: usNodes,
+    },
+  });
+  if (response?.error) {
+    throw new Error(response.error);
+  }
+  applyIpProxyRoutingResponseToState(response);
   updateIpProxyUI(latestState);
 
   if (!silent) {
+    const routing = response?.proxyRouting || {};
     const exitIp = String(routing?.exitIp || '').trim();
     const exitRegion = String(routing?.exitRegion || '').trim();
-    const exitSource = String(routing?.exitSource || '').trim().toLowerCase();
-    const sourceHint = exitSource === 'background_fallback'
-      ? '（后台兜底，可能受全局代理影响）'
-      : '';
-    if (exitIp) {
-      showToast(`出口检测成功：${exitIp}${exitRegion ? ` [${exitRegion}]` : ''}${sourceHint}`, 'success', 2600);
+    const node = String(response?.node || '').trim();
+    const matched = Boolean(response?.matched);
+    const attempts = Number(response?.attempts) || 1;
+    if (matched) {
+      const retryHint = attempts > 1 ? `（第 ${attempts} 次通过）` : '';
+      showToast(`${normalizedRegion} 出口检测通过${retryHint}：${exitIp || 'unknown IP'}${node ? ` / ${node}` : ''}`, 'success', 3000);
     } else {
-      showToast('出口检测完成，但未获取到出口 IP', 'warn', 2200);
+      showToast(`${normalizedRegion} 出口检测不匹配：已尝试 ${attempts} 次，当前 ${exitIp || 'unknown IP'}${exitRegion ? ` [${exitRegion}]` : ''}`, 'warn', 4200);
     }
   }
   return response;

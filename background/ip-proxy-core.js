@@ -126,7 +126,9 @@ function normalizeIpProxyProviderValue(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
   const enabledValues = Array.isArray(globalThis.IP_PROXY_ENABLED_SERVICE_VALUES)
     ? globalThis.IP_PROXY_ENABLED_SERVICE_VALUES
-    : [];
+    : (typeof IP_PROXY_ENABLED_SERVICE_VALUES !== 'undefined' && Array.isArray(IP_PROXY_ENABLED_SERVICE_VALUES)
+      ? IP_PROXY_ENABLED_SERVICE_VALUES
+      : []);
   if (enabledValues.includes(normalized)) {
     return normalized;
   }
@@ -1037,8 +1039,19 @@ function normalizeIpProxyListFromPayload(payload, provider = DEFAULT_IP_PROXY_SE
   return singleCandidate ? [singleCandidate] : [];
 }
 
-function getAccountModeProxyPoolFromState(state = {}, provider = DEFAULT_IP_PROXY_SERVICE) {
+function getAccountModeProxyPoolFromState(state = {}, provider = '') {
   const normalizedProvider = normalizeIpProxyProviderValue(provider || state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE);
+  if (normalizedProvider === 'clash-verge') {
+    return [{
+      host: '127.0.0.1',
+      port: 7897,
+      username: '',
+      password: '',
+      protocol: 'http',
+      region: String(state?.clashProxyLastRegion || state?.ipProxyRegion || '').trim(),
+      provider: normalizedProvider,
+    }];
+  }
   const accountListEnabled = isIpProxyAccountListEnabled();
   const rawLines = normalizeIpProxyAccountList(state?.ipProxyAccountList || '').split('\n').filter(Boolean);
   const lines = accountListEnabled ? rawLines : [];
@@ -1123,7 +1136,7 @@ function hasConfiguredAccountListEntries(state = {}) {
   return lines.length > 0;
 }
 
-function getAccountListParseFailureHint(state = {}, provider = DEFAULT_IP_PROXY_SERVICE) {
+function getAccountListParseFailureHint(state = {}, provider = '') {
   if (!isIpProxyAccountListEnabled()) {
     return '';
   }
@@ -1260,6 +1273,17 @@ function buildIpProxyRuntimeStatePatch(mode = DEFAULT_IP_PROXY_MODE, runtime = {
 function getIpProxyCurrentEntryFromState(state = {}) {
   const mode = normalizeIpProxyMode(state?.ipProxyMode);
   const provider = normalizeIpProxyProviderValue(state?.ipProxyService);
+  if (provider === 'clash-verge') {
+    return {
+      host: '127.0.0.1',
+      port: 7897,
+      username: '',
+      password: '',
+      protocol: 'http',
+      region: String(state?.clashProxyLastRegion || state?.ipProxyRegion || '').trim(),
+      provider,
+    };
+  }
   if (mode === 'api' && !isApiModeProxyConfigAvailable(state)) {
     return null;
   }
@@ -3187,7 +3211,8 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
 
   const explicitForceAuthRebind = Boolean(options?.forceAuthRebind);
   const suppressAuthRebind = Boolean(options?.suppressAuthRebind);
-  const hasAccountListConfigured = mode === 'account' && hasConfiguredAccountListEntries(resolvedState);
+  const isClashVergeProvider = provider === 'clash-verge';
+  const hasAccountListConfigured = mode === 'account' && !isClashVergeProvider && hasConfiguredAccountListEntries(resolvedState);
   const hasMultipleAccountEntries = mode === 'account'
     && hasAccountListConfigured
     && getAccountModeProxyPoolFromState(resolvedState, provider).length > 1;
@@ -3245,8 +3270,10 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
   );
 
   try {
-    installIpProxyAuthListener();
-    installIpProxyErrorListener();
+    if (!isClashVergeProvider) {
+      installIpProxyAuthListener();
+      installIpProxyErrorListener();
+    }
     resetIpProxyRuntimeErrorDiagnostics();
     if (shouldForceDrain) {
       if (typeof addLog === 'function') {
@@ -3796,9 +3823,7 @@ async function probeIpProxyExit(options = {}) {
     return { proxyRouting: status };
   }
 
-  installIpProxyAuthListener();
-  installIpProxyErrorListener();
-  resetIpProxyRuntimeErrorDiagnostics();
+    resetIpProxyRuntimeErrorDiagnostics();
   currentIpProxyAuthEntry = entry?.username
     ? {
         host: entry.host,

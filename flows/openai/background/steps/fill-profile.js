@@ -7,6 +7,7 @@
       generateRandomBirthday,
       generateRandomName,
       sendToContentScript,
+      sendToContentScriptResilient,
     } = deps;
 
     async function executeStep5() {
@@ -15,7 +16,11 @@
 
       await addLog(`步骤 5：已生成姓名 ${firstName} ${lastName}，生日 ${year}-${month}-${day}`);
 
-      await sendToContentScript('openai-auth', {
+      const sendProfileCommand = typeof sendToContentScriptResilient === 'function'
+        ? sendToContentScriptResilient
+        : sendToContentScript;
+
+      await sendProfileCommand('openai-auth', {
         type: 'EXECUTE_NODE',
         nodeId: 'fill-profile',
         step: 5,
@@ -27,6 +32,13 @@
           month,
           day,
         },
+      }, {
+        timeoutMs: 150000,
+        retryDelayMs: 600,
+        responseTimeoutMs: 150000,
+        logMessage: '步骤 5：资料页正在跳转或刷新，正在等待内容脚本重新连接后继续...',
+        logStep: 5,
+        logStepKey: 'fill-profile',
       });
     }
 

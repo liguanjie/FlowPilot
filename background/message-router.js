@@ -37,6 +37,9 @@
       exportSettingsBundle,
       fetchGeneratedEmail,
       refreshGpcCardBalance,
+      getClashProxyOptions,
+      probeClashProxyRegionExit,
+      refreshClashProxyProvidersForConfig,
       testKiroRsConnection,
       finalizePhoneActivationAfterSuccessfulFlow,
       finalizeStep3Completion,
@@ -1709,6 +1712,36 @@
             throw new Error('IP 代理自动同步能力尚未接入。');
           }
           const result = await runIpProxyAutoSync('manual');
+          return { ok: true, ...result };
+        }
+
+        case 'GET_CLASH_PROXY_OPTIONS': {
+          if (typeof getClashProxyOptions !== 'function') {
+            throw new Error('Clash Verge 节点读取能力尚未接入。');
+          }
+          const result = await getClashProxyOptions(message.payload || {});
+          return { ok: true, ...result };
+        }
+
+        case 'REFRESH_CLASH_PROXY_PROVIDERS': {
+          if (typeof refreshClashProxyProvidersForConfig !== 'function') {
+            throw new Error('Clash Verge 订阅刷新能力尚未接入。');
+          }
+          const result = await refreshClashProxyProvidersForConfig(message.payload || {});
+          return { ok: true, ...result };
+        }
+
+        case 'PROBE_CLASH_PROXY_REGION_EXIT': {
+          if (message.source === 'sidepanel') {
+            await lockAutomationWindowFromMessage(message, sender);
+          }
+          if (typeof probeClashProxyRegionExit !== 'function') {
+            throw new Error('Clash Verge 分地区出口检测能力尚未接入。');
+          }
+          const result = await probeClashProxyRegionExit(
+            message.payload?.region || '',
+            message.payload || {}
+          );
           return { ok: true, ...result };
         }
 

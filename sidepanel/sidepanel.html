@@ -1235,7 +1235,8 @@
             <div class="data-row" id="row-ip-proxy-service" style="display:none;">
               <span class="data-label">代理服务</span>
               <div class="data-inline">
-                <select id="select-ip-proxy-service" class="data-select" disabled>
+                <select id="select-ip-proxy-service" class="data-select">
+                  <option value="clash-verge">Clash Verge 本地服务</option>
                   <option value="711proxy">711Proxy（首版）</option>
                 </select>
                 <button id="btn-ip-proxy-service-login" class="btn btn-outline btn-sm data-inline-btn" type="button">
@@ -1312,6 +1313,57 @@
                     <span class="data-label">地区参数</span>
                     <input type="text" id="input-ip-proxy-region" class="data-input" placeholder="可选，例如 US / DE / HK" />
                   </div>
+                  <div class="data-row ip-proxy-column-row" id="row-clash-proxy-switch-enabled" style="display:none;">
+                    <span class="data-label">Clash 切节点</span>
+                    <div class="data-inline">
+                      <label class="toggle-switch" for="input-clash-proxy-switch-enabled" title="按流程地区标记自动切换 Clash/Mihomo 节点">
+                        <input type="checkbox" id="input-clash-proxy-switch-enabled" />
+                        <span class="toggle-switch-track" aria-hidden="true">
+                          <span class="toggle-switch-thumb"></span>
+                        </span>
+                      </label>
+                      <span class="data-value">执行时接管浏览器到 127.0.0.1:7897，1-8 使用 JP，9-16 使用 US</span>
+                    </div>
+                  </div>
+                  <div class="data-row ip-proxy-column-row" id="row-clash-proxy-control-url" style="display:none;">
+                    <span class="data-label">Clash 控制地址</span>
+                    <input type="text" id="input-clash-proxy-control-url" class="data-input mono"
+                      placeholder="http://127.0.0.1:9097" />
+                  </div>
+                  <div class="data-row ip-proxy-column-row" id="row-clash-proxy-secret" style="display:none;">
+                    <span class="data-label">Clash Secret</span>
+                    <div class="input-with-icon">
+                      <input type="password" id="input-clash-proxy-secret" class="data-input data-input-with-icon"
+                        placeholder="可选，未设置 external-controller-secret 时留空" />
+                      <button id="btn-toggle-clash-proxy-secret" class="input-icon-btn" type="button"
+                        data-password-toggle="input-clash-proxy-secret" data-show-label="显示 Clash Secret"
+                        data-hide-label="隐藏 Clash Secret" aria-label="显示 Clash Secret"
+                        title="显示 Clash Secret"></button>
+                    </div>
+                  </div>
+                  <div class="data-row ip-proxy-column-row" id="row-clash-proxy-group" style="display:none;">
+                    <span class="data-label">Clash 代理组</span>
+                    <div class="data-inline">
+                      <select id="input-clash-proxy-group" class="data-select" aria-label="Clash 代理组"></select>
+                      <button id="btn-refresh-clash-proxy-options" class="btn btn-outline btn-sm data-inline-btn" type="button">刷新</button>
+                    </div>
+                  </div>
+                  <div class="data-row ip-proxy-column-row" id="row-clash-proxy-nodes" style="display:none;">
+                    <span class="data-label">JP / US 节点</span>
+                    <div class="clash-proxy-node-stack">
+                      <div class="clash-proxy-node-row">
+                        <div class="clash-proxy-node-picker">
+                          <input type="text" id="input-clash-proxy-japan-node-filter" class="data-input" placeholder="筛选 JP 节点，例如 日本 / 家宽 / softbank" />
+                          <select id="input-clash-proxy-japan-node" class="data-select clash-proxy-node-select" multiple size="6" aria-label="JP 节点"></select>
+                        </div>
+                        <div class="clash-proxy-node-picker">
+                          <input type="text" id="input-clash-proxy-us-node-filter" class="data-input" placeholder="筛选 US 节点，例如 美国 / 家宽 / VIP" />
+                          <select id="input-clash-proxy-us-node" class="data-select clash-proxy-node-select" multiple size="6" aria-label="US 节点"></select>
+                        </div>
+                      </div>
+                      <div id="clash-proxy-options-status" class="data-value clash-proxy-options-status">等待读取 Clash 节点</div>
+                    </div>
+                  </div>
                   <div class="data-row ip-proxy-column-row" id="row-ip-proxy-pool-target-count" style="display:none;">
                     <span class="data-label">任务切换阈值</span>
                     <div class="data-inline">
@@ -1363,6 +1415,8 @@
                   <button id="btn-ip-proxy-next" class="btn btn-outline btn-sm data-inline-btn" type="button">下一条</button>
                   <button id="btn-ip-proxy-change" class="btn btn-outline btn-sm data-inline-btn" type="button" title="保持当前会话并刷新出口（仅 711 + session）">Change</button>
                   <button id="btn-ip-proxy-probe" class="btn btn-outline btn-sm data-inline-btn" type="button">检测出口</button>
+                  <button id="btn-ip-proxy-probe-jp" class="btn btn-outline btn-sm data-inline-btn" type="button" hidden>检测 JP</button>
+                  <button id="btn-ip-proxy-probe-us" class="btn btn-outline btn-sm data-inline-btn" type="button" hidden>检测 US</button>
                 </span>
                 <span id="ip-proxy-action-hint" class="ip-proxy-action-hint">
                   下一条：切到代理池下一条。Change：保持当前 session 重绑链路（仅 711 + session）。

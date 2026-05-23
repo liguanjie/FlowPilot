@@ -159,6 +159,22 @@ const inputIpProxyPassword = document.getElementById('input-ip-proxy-password');
 const btnToggleIpProxyPassword = document.getElementById('btn-toggle-ip-proxy-password');
 const rowIpProxyRegion = document.getElementById('row-ip-proxy-region');
 const inputIpProxyRegion = document.getElementById('input-ip-proxy-region');
+const rowClashProxySwitchEnabled = document.getElementById('row-clash-proxy-switch-enabled');
+const inputClashProxySwitchEnabled = document.getElementById('input-clash-proxy-switch-enabled');
+const rowClashProxyControlUrl = document.getElementById('row-clash-proxy-control-url');
+const inputClashProxyControlUrl = document.getElementById('input-clash-proxy-control-url');
+const rowClashProxySecret = document.getElementById('row-clash-proxy-secret');
+const inputClashProxySecret = document.getElementById('input-clash-proxy-secret');
+const btnToggleClashProxySecret = document.getElementById('btn-toggle-clash-proxy-secret');
+const rowClashProxyGroup = document.getElementById('row-clash-proxy-group');
+const inputClashProxyGroup = document.getElementById('input-clash-proxy-group');
+const btnRefreshClashProxyOptions = document.getElementById('btn-refresh-clash-proxy-options');
+const rowClashProxyNodes = document.getElementById('row-clash-proxy-nodes');
+const inputClashProxyJapanNodeFilter = document.getElementById('input-clash-proxy-japan-node-filter');
+const inputClashProxyUsNodeFilter = document.getElementById('input-clash-proxy-us-node-filter');
+const inputClashProxyJapanNode = document.getElementById('input-clash-proxy-japan-node');
+const inputClashProxyUsNode = document.getElementById('input-clash-proxy-us-node');
+const clashProxyOptionsStatus = document.getElementById('clash-proxy-options-status');
 const rowIpProxyActions = document.getElementById('row-ip-proxy-actions');
 const ipProxyActionButtons = document.getElementById('ip-proxy-action-buttons');
 const ipProxyActionHint = document.getElementById('ip-proxy-action-hint');
@@ -166,6 +182,8 @@ const btnIpProxyRefresh = document.getElementById('btn-ip-proxy-refresh');
 const btnIpProxyNext = document.getElementById('btn-ip-proxy-next');
 const btnIpProxyChange = document.getElementById('btn-ip-proxy-change');
 const btnIpProxyProbe = document.getElementById('btn-ip-proxy-probe');
+const btnIpProxyProbeJp = document.getElementById('btn-ip-proxy-probe-jp');
+const btnIpProxyProbeUs = document.getElementById('btn-ip-proxy-probe-us');
 const btnIpProxyCheckIp = document.getElementById('btn-ip-proxy-check-ip');
 const ipProxyCurrent = document.getElementById('ip-proxy-current');
 const rowIpProxyRuntimeStatus = document.getElementById('row-ip-proxy-runtime-status');
@@ -1090,15 +1108,29 @@ const NEX_SMS_FALLBACK_COUNTRY_ITEMS = Object.freeze([
   { id: 6, label: 'Indonesia (#6)', searchText: 'Indonesia 6 ID' },
   { id: 7, label: 'Malaysia (#7)', searchText: 'Malaysia 7 MY' },
 ]);
-const DEFAULT_IP_PROXY_SERVICE = '711proxy';
-const SUPPORTED_IP_PROXY_SERVICES = ['711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
-const IP_PROXY_ENABLED_SERVICES = ['711proxy'];
+const CLASH_VERGE_IP_PROXY_SERVICE = 'clash-verge';
+const DEFAULT_IP_PROXY_SERVICE = CLASH_VERGE_IP_PROXY_SERVICE;
+const SUPPORTED_IP_PROXY_SERVICES = [CLASH_VERGE_IP_PROXY_SERVICE, '711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
+const IP_PROXY_ENABLED_SERVICES = [CLASH_VERGE_IP_PROXY_SERVICE, '711proxy'];
+const DEFAULT_CLASH_PROXY_CONTROL_URL = 'http://127.0.0.1:9097';
 const DEFAULT_IP_PROXY_MODE = 'account';
 const SUPPORTED_IP_PROXY_MODES = ['api', 'account'];
 const DEFAULT_IP_PROXY_PROTOCOL = 'http';
 const SUPPORTED_IP_PROXY_PROTOCOLS = ['http', 'https', 'socks4', 'socks5'];
 const IP_PROXY_API_MODE_ENABLED = false;
 const IP_PROXY_ACCOUNT_LIST_ENABLED = false;
+const DEFAULT_CLASH_PROXY_GROUP = '寿司云';
+const DEFAULT_CLASH_PROXY_JAPAN_NODE = '日本 07';
+const DEFAULT_CLASH_PROXY_US_NODE = '美国 01';
+const clashProxyOptionsState = {
+  groups: [],
+  nodesByGroup: {},
+  selectedGroup: '',
+  nodes: [],
+  loading: false,
+  error: '',
+  fetchedAt: 0,
+};
 
 function getManagedAliasUtils() {
   return window.MultiPageManagedAliasUtils || null;
@@ -1419,6 +1451,7 @@ function shouldAttachAutomationWindow(message = {}) {
     'START_SCHEDULED_AUTO_RUN_NOW',
     'SKIP_AUTO_RUN_COUNTDOWN',
     'PROBE_IP_PROXY_EXIT',
+    'PROBE_CLASH_PROXY_REGION_EXIT',
   ].includes(String(message?.type || '').trim());
 }
 
@@ -1441,6 +1474,191 @@ async function sendSidepanelMessage(message = {}) {
 }
 
 window.sendSidepanelMessage = sendSidepanelMessage;
+
+function normalizeClashProxyName(value = '') {
+  return String(value || '').trim();
+}
+
+function dedupeClashProxyNames(values = []) {
+  const result = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const name = normalizeClashProxyName(value);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    result.push(name);
+  });
+  return result;
+}
+
+function normalizeClashProxyNodeList(value = [], fallback = '') {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[\n,，;；]+/g);
+  const nodes = dedupeClashProxyNames(source);
+  const fallbackNode = normalizeClashProxyName(fallback);
+  return nodes.length ? nodes : (fallbackNode ? [fallbackNode] : []);
+}
+
+function getSelectSelectedValues(select) {
+  if (!select) {
+    return [];
+  }
+  return Array.from(select.selectedOptions || [])
+    .map((option) => normalizeClashProxyName(option.value))
+    .filter(Boolean);
+}
+
+function setSelectOptions(select, options = [], selectedValues = [], placeholder = '') {
+  if (!select) {
+    return;
+  }
+  const selected = new Set(dedupeClashProxyNames(selectedValues));
+  const optionValues = dedupeClashProxyNames([
+    ...(Array.isArray(options) ? options : []),
+    ...selected,
+  ]);
+  const previousScrollTop = select.scrollTop;
+  select.innerHTML = '';
+  if (placeholder && !select.multiple) {
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = placeholder;
+    select.appendChild(placeholderOption);
+  }
+  optionValues.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    option.selected = selected.has(value);
+    select.appendChild(option);
+  });
+  if (!select.multiple && selected.size > 0) {
+    select.value = Array.from(selected)[0] || '';
+  }
+  select.scrollTop = previousScrollTop;
+}
+
+function getSelectedClashProxyGroup() {
+  return normalizeClashProxyName(inputClashProxyGroup?.value)
+    || normalizeClashProxyName(latestState?.clashProxyGroup)
+    || DEFAULT_CLASH_PROXY_GROUP;
+}
+
+function getClashProxyNodesForSelectedGroup() {
+  const group = getSelectedClashProxyGroup();
+  return Array.isArray(clashProxyOptionsState.nodesByGroup?.[group])
+    ? clashProxyOptionsState.nodesByGroup[group]
+    : (Array.isArray(clashProxyOptionsState.nodes) ? clashProxyOptionsState.nodes : []);
+}
+
+function getFilteredClashProxyNodes(filterInput = null) {
+  const filter = normalizeClashProxyName(filterInput?.value).toLowerCase();
+  const nodes = getClashProxyNodesForSelectedGroup();
+  if (!filter) {
+    return nodes;
+  }
+  return nodes.filter((node) => node.toLowerCase().includes(filter));
+}
+
+function renderClashProxySelectors() {
+  const selectedGroup = getSelectedClashProxyGroup();
+  const groups = dedupeClashProxyNames([
+    ...clashProxyOptionsState.groups,
+    selectedGroup,
+  ]);
+  setSelectOptions(inputClashProxyGroup, groups, [selectedGroup], '请选择代理组');
+
+  const currentJapanNodes = normalizeClashProxyNodeList(
+    getSelectSelectedValues(inputClashProxyJapanNode).length
+      ? getSelectSelectedValues(inputClashProxyJapanNode)
+      : latestState?.clashProxyJapanNodes,
+    latestState?.clashProxyJapanNode || DEFAULT_CLASH_PROXY_JAPAN_NODE
+  );
+  const currentUsNodes = normalizeClashProxyNodeList(
+    getSelectSelectedValues(inputClashProxyUsNode).length
+      ? getSelectSelectedValues(inputClashProxyUsNode)
+      : latestState?.clashProxyUsNodes,
+    latestState?.clashProxyUsNode || DEFAULT_CLASH_PROXY_US_NODE
+  );
+  const visibleJapanNodes = getFilteredClashProxyNodes(inputClashProxyJapanNodeFilter);
+  const visibleUsNodes = getFilteredClashProxyNodes(inputClashProxyUsNodeFilter);
+  setSelectOptions(inputClashProxyJapanNode, visibleJapanNodes, currentJapanNodes);
+  setSelectOptions(inputClashProxyUsNode, visibleUsNodes, currentUsNodes);
+
+  if (clashProxyOptionsStatus) {
+    const groupNodeCount = getClashProxyNodesForSelectedGroup().length;
+    const jpCount = currentJapanNodes.length;
+    const usCount = currentUsNodes.length;
+    if (clashProxyOptionsState.loading) {
+      clashProxyOptionsStatus.textContent = '正在读取 Clash 代理组和节点...';
+    } else if (clashProxyOptionsState.error) {
+      clashProxyOptionsStatus.textContent = `读取失败：${clashProxyOptionsState.error}`;
+    } else if (groupNodeCount > 0) {
+      clashProxyOptionsStatus.textContent = `当前组 ${selectedGroup}：${groupNodeCount} 个节点；JP 筛选显示 ${visibleJapanNodes.length} 个，已选 ${jpCount} 个；US 筛选显示 ${visibleUsNodes.length} 个，已选 ${usCount} 个。`;
+    } else {
+      clashProxyOptionsStatus.textContent = '未读取到节点，请确认 Clash 外部控制地址和 Secret 后点击刷新。';
+    }
+  }
+}
+
+async function refreshClashProxyOptions(options = {}) {
+  const { silent = false, refreshProviders = false } = options || {};
+  if (!inputClashProxyGroup) {
+    return null;
+  }
+  clashProxyOptionsState.loading = true;
+  clashProxyOptionsState.error = '';
+  renderClashProxySelectors();
+  try {
+    if (refreshProviders) {
+      await sendSidepanelMessage({
+        type: 'REFRESH_CLASH_PROXY_PROVIDERS',
+        payload: {
+          clashProxyControlUrl: normalizeClashProxyName(inputClashProxyControlUrl?.value) || DEFAULT_CLASH_PROXY_CONTROL_URL,
+          clashProxySecret: String(inputClashProxySecret?.value || ''),
+        },
+      }).catch(() => null);
+    }
+    const response = await sendSidepanelMessage({
+      type: 'GET_CLASH_PROXY_OPTIONS',
+      payload: {
+        clashProxyControlUrl: normalizeClashProxyName(inputClashProxyControlUrl?.value) || DEFAULT_CLASH_PROXY_CONTROL_URL,
+        clashProxySecret: String(inputClashProxySecret?.value || ''),
+        clashProxyGroup: getSelectedClashProxyGroup(),
+      },
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || '读取 Clash 节点失败。');
+    }
+    clashProxyOptionsState.groups = dedupeClashProxyNames(response.groups || []);
+    clashProxyOptionsState.nodesByGroup = response.nodesByGroup && typeof response.nodesByGroup === 'object'
+      ? response.nodesByGroup
+      : {};
+    clashProxyOptionsState.selectedGroup = normalizeClashProxyName(response.selectedGroup) || getSelectedClashProxyGroup();
+    clashProxyOptionsState.nodes = Array.isArray(response.nodes) ? response.nodes : [];
+    clashProxyOptionsState.fetchedAt = Date.now();
+    if (inputClashProxyGroup && clashProxyOptionsState.selectedGroup) {
+      inputClashProxyGroup.value = clashProxyOptionsState.selectedGroup;
+    }
+    if (!silent && typeof showToast === 'function') {
+      showToast('Clash 节点列表已刷新。', 'success', 1600);
+    }
+    return response;
+  } catch (error) {
+    clashProxyOptionsState.error = error?.message || String(error || '读取 Clash 节点失败。');
+    if (!silent && typeof showToast === 'function') {
+      showToast(clashProxyOptionsState.error, 'error', 2600);
+    }
+    return null;
+  } finally {
+    clashProxyOptionsState.loading = false;
+    renderClashProxySelectors();
+  }
+}
 
 const DEFAULT_SUB2API_GROUP_OPTIONS = ['codex', 'openai-plus'];
 const editableListPickerModule = window.SidepanelEditableListPicker || {};
@@ -4147,9 +4365,9 @@ function collectSettingsPayload() {
     ? normalizeIpProxyService
     : ((value = '') => {
       const normalized = String(value || '').trim().toLowerCase();
-      return ['711proxy'].includes(normalized)
+      return ['clash-verge', '711proxy'].includes(normalized)
         ? normalized
-        : '711proxy';
+        : DEFAULT_IP_PROXY_SERVICE;
     });
   const normalizeIpProxyModeSafe = typeof normalizeIpProxyMode === 'function'
     ? normalizeIpProxyMode
@@ -4265,7 +4483,7 @@ function collectSettingsPayload() {
       const raw = (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue))
         ? rawValue
         : {};
-      const services = ['711proxy'];
+      const services = ['clash-verge', '711proxy'];
       const fallbackProfile = {
         mode: normalizeIpProxyModeSafe(fallbackState?.ipProxyMode || 'account'),
         apiUrl: String(fallbackState?.ipProxyApiUrl || '').trim(),
@@ -4345,9 +4563,30 @@ function collectSettingsPayload() {
   const ipProxyRegionRawValue = typeof inputIpProxyRegion !== 'undefined'
     ? inputIpProxyRegion?.value
     : '';
+  const clashProxySwitchEnabledRawValue = typeof inputClashProxySwitchEnabled !== 'undefined'
+    ? Boolean(inputClashProxySwitchEnabled?.checked)
+    : Boolean(latestState?.clashProxySwitchEnabled);
+  const clashProxyControlUrlRawValue = typeof inputClashProxyControlUrl !== 'undefined'
+    ? inputClashProxyControlUrl?.value
+    : latestState?.clashProxyControlUrl;
+  const clashProxySecretRawValue = typeof inputClashProxySecret !== 'undefined'
+    ? inputClashProxySecret?.value
+    : latestState?.clashProxySecret;
+  const clashProxyGroupRawValue = typeof inputClashProxyGroup !== 'undefined'
+    ? inputClashProxyGroup?.value
+    : latestState?.clashProxyGroup;
+  const clashProxyJapanNodesRawValue = typeof inputClashProxyJapanNode !== 'undefined'
+    ? getSelectSelectedValues(inputClashProxyJapanNode)
+    : normalizeClashProxyNodeList(latestState?.clashProxyJapanNodes, latestState?.clashProxyJapanNode);
+  const clashProxyUsNodesRawValue = typeof inputClashProxyUsNode !== 'undefined'
+    ? getSelectSelectedValues(inputClashProxyUsNode)
+    : normalizeClashProxyNodeList(latestState?.clashProxyUsNodes, latestState?.clashProxyUsNode);
+  const clashProxyJapanNodesValue = normalizeClashProxyNodeList(clashProxyJapanNodesRawValue, latestState?.clashProxyJapanNode || DEFAULT_CLASH_PROXY_JAPAN_NODE);
+  const clashProxyUsNodesValue = normalizeClashProxyNodeList(clashProxyUsNodesRawValue, latestState?.clashProxyUsNode || DEFAULT_CLASH_PROXY_US_NODE);
   const selectedIpProxyService = normalizeIpProxyServiceSafe(
-    ipProxyServiceRawValue || latestState?.ipProxyService || '711proxy'
+    ipProxyServiceRawValue || latestState?.ipProxyService || DEFAULT_IP_PROXY_SERVICE
   );
+  const isClashVergeProxyService = selectedIpProxyService === CLASH_VERGE_IP_PROXY_SERVICE;
   const selectedIpProxyModeRaw = normalizeIpProxyModeSafe(getSelectedIpProxyModeSafe());
   const selectedIpProxyMode = (!isIpProxyApiModeEnabledSafe && selectedIpProxyModeRaw === 'api')
     ? 'account'
@@ -4365,6 +4604,16 @@ function collectSettingsPayload() {
     username: String(ipProxyUsernameRawValue || '').trim(),
     password: String(ipProxyPasswordRawValue || ''),
     region: String(ipProxyRegionRawValue || '').trim(),
+  };
+  const currentClashProxySettings = {
+    switchEnabled: isClashVergeProxyService ? true : Boolean(clashProxySwitchEnabledRawValue),
+    controlUrl: String(clashProxyControlUrlRawValue || DEFAULT_CLASH_PROXY_CONTROL_URL).trim(),
+    secret: String(clashProxySecretRawValue || ''),
+    group: String(clashProxyGroupRawValue || '').trim(),
+    japanNode: clashProxyJapanNodesValue[0] || '',
+    japanNodes: clashProxyJapanNodesValue,
+    usNode: clashProxyUsNodesValue[0] || '',
+    usNodes: clashProxyUsNodesValue,
   };
   const ipProxyServiceProfiles = normalizeIpProxyServiceProfilesSafe({
     ...(latestState?.ipProxyServiceProfiles || {}),
@@ -4874,6 +5123,27 @@ function collectSettingsPayload() {
     ipProxyUsername: currentIpProxyServiceProfile.username,
     ipProxyPassword: currentIpProxyServiceProfile.password,
     ipProxyRegion: currentIpProxyServiceProfile.region,
+    settingsState: {
+      ...(latestState?.settingsState || {}),
+      services: {
+        ...(latestState?.settingsState?.services || {}),
+        proxy: {
+          ...(latestState?.settingsState?.services?.proxy || {}),
+          enabled: getSelectedIpProxyEnabledSafe(),
+          provider: selectedIpProxyService,
+          mode: currentIpProxyServiceProfile.mode,
+          clash: currentClashProxySettings,
+        },
+      },
+    },
+    clashProxySwitchEnabled: isClashVergeProxyService ? true : Boolean(clashProxySwitchEnabledRawValue),
+    clashProxyControlUrl: String(clashProxyControlUrlRawValue || DEFAULT_CLASH_PROXY_CONTROL_URL).trim(),
+    clashProxySecret: String(clashProxySecretRawValue || ''),
+    clashProxyGroup: String(clashProxyGroupRawValue || '').trim(),
+    clashProxyJapanNode: clashProxyJapanNodesValue[0] || '',
+    clashProxyJapanNodes: clashProxyJapanNodesValue,
+    clashProxyUsNode: clashProxyUsNodesValue[0] || '',
+    clashProxyUsNodes: clashProxyUsNodesValue,
     codex2apiUrl: inputCodex2ApiUrl.value.trim(),
     codex2apiAdminKey: inputCodex2ApiAdminKey.value.trim(),
     plusModeEnabled: effectivePlusModeEnabled,
@@ -10721,10 +10991,16 @@ function renderStepsList() {
   stepsList.innerHTML = workflowNodes.map((node) => {
     const step = getStepIdByNodeIdForCurrentMode(node.nodeId);
     const nodeId = String(node.nodeId || '').trim();
+    const regionMarks = getStepRegionMarks(step, latestState)
+      .map((mark) => `<span class="step-region-mark step-region-${escapeHtml(mark.toLowerCase())}">${escapeHtml(mark)}</span>`)
+      .join('');
     return `
     <div class="step-row" data-step="${step}" data-node-id="${escapeHtml(nodeId)}" data-step-key="${escapeHtml(node.executeKey || nodeId)}">
       <div class="step-indicator" data-step="${step}" data-node-id="${escapeHtml(nodeId)}"><span class="step-num">${step || node.displayOrder || ''}</span></div>
-      <button class="step-btn" data-step="${step}" data-node-id="${escapeHtml(nodeId)}" data-step-key="${escapeHtml(node.executeKey || nodeId)}">${escapeHtml(node.title)}</button>
+      <button class="step-btn" data-step="${step}" data-node-id="${escapeHtml(nodeId)}" data-step-key="${escapeHtml(node.executeKey || nodeId)}">
+        <span class="step-title">${escapeHtml(node.title)}</span>
+        ${regionMarks ? `<span class="step-region-marks">${regionMarks}</span>` : ''}
+      </button>
       <span class="step-status" data-step="${step}" data-node-id="${escapeHtml(nodeId)}"></span>
     </div>
   `;
@@ -10859,7 +11135,7 @@ function applySettingsState(state) {
       accountContributionEnabled: Boolean(state?.accountContributionEnabled),
     });
   }
-  const fallbackIpProxyService = '711proxy';
+  const fallbackIpProxyService = DEFAULT_IP_PROXY_SERVICE;
   const fallbackIpProxyMode = 'account';
   const fallbackIpProxyProtocol = 'http';
   const resolveIpProxyService = (value) => (typeof normalizeIpProxyService === 'function'
@@ -11148,6 +11424,27 @@ function applySettingsState(state) {
   if (typeof inputIpProxyRegion !== 'undefined' && inputIpProxyRegion) {
     inputIpProxyRegion.value = activeIpProxyProfile.region;
   }
+  if (typeof inputClashProxySwitchEnabled !== 'undefined' && inputClashProxySwitchEnabled) {
+    inputClashProxySwitchEnabled.checked = normalizedIpProxyService === CLASH_VERGE_IP_PROXY_SERVICE
+      ? true
+      : Boolean(state?.clashProxySwitchEnabled);
+  }
+  if (typeof inputClashProxyControlUrl !== 'undefined' && inputClashProxyControlUrl) {
+    inputClashProxyControlUrl.value = String(state?.clashProxyControlUrl || DEFAULT_CLASH_PROXY_CONTROL_URL).trim();
+  }
+  if (typeof inputClashProxySecret !== 'undefined' && inputClashProxySecret) {
+    inputClashProxySecret.value = String(state?.clashProxySecret || '');
+  }
+  if (typeof inputClashProxyGroup !== 'undefined' && inputClashProxyGroup) {
+    setSelectOptions(inputClashProxyGroup, clashProxyOptionsState.groups, [String(state?.clashProxyGroup || DEFAULT_CLASH_PROXY_GROUP).trim()], '请选择代理组');
+  }
+  if (typeof inputClashProxyJapanNode !== 'undefined' && inputClashProxyJapanNode) {
+    setSelectOptions(inputClashProxyJapanNode, getFilteredClashProxyNodes(inputClashProxyJapanNodeFilter), normalizeClashProxyNodeList(state?.clashProxyJapanNodes, state?.clashProxyJapanNode || DEFAULT_CLASH_PROXY_JAPAN_NODE));
+  }
+  if (typeof inputClashProxyUsNode !== 'undefined' && inputClashProxyUsNode) {
+    setSelectOptions(inputClashProxyUsNode, getFilteredClashProxyNodes(inputClashProxyUsNodeFilter), normalizeClashProxyNodeList(state?.clashProxyUsNodes, state?.clashProxyUsNode || DEFAULT_CLASH_PROXY_US_NODE));
+  }
+  renderClashProxySelectors();
   if (typeof setIpProxyMode === 'function') {
     setIpProxyMode(activeIpProxyProfile.mode);
   }
@@ -11484,6 +11781,9 @@ async function restoreState() {
   try {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
     applySettingsState(state);
+    if (normalizeIpProxyService(state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE) === CLASH_VERGE_IP_PROXY_SERVICE) {
+      refreshClashProxyOptions({ silent: true }).catch(() => {});
+    }
     if (getSelectedEmailGenerator() === 'icloud' && icloudSection?.style.display !== 'none') {
       refreshIcloudAliases({ silent: true }).catch(() => { });
     }
@@ -13417,7 +13717,8 @@ function updatePanelModeUI() {
   const useCodex2Api = displayTargetId === 'codex2api';
   const step9Btn = document.querySelector('.step-btn[data-step-key="platform-verify"]');
   if (step9Btn && activeFlowId === DEFAULT_ACTIVE_FLOW_ID) {
-    step9Btn.textContent = displayTargetId === 'sub2api'
+    const titleEl = step9Btn.querySelector('.step-title') || step9Btn;
+    titleEl.textContent = displayTargetId === 'sub2api'
       ? 'SUB2API 回调验证'
       : (useCodex2Api ? 'Codex2API 回调验证' : 'CPA 回调验证');
   }
@@ -13452,6 +13753,23 @@ function updateStepUI(step, status) {
   updateButtonStates();
   updateProgressCounter();
   updateConfigMenuControls();
+}
+
+function getStepRegionMarks(step, state = latestState) {
+  const numericStep = Number(step);
+  const activeFlowId = String(state?.activeFlowId || state?.flowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase();
+  if (activeFlowId !== DEFAULT_ACTIVE_FLOW_ID || !Number.isInteger(numericStep) || numericStep <= 0) {
+    return [];
+  }
+
+  const marks = [];
+  if (numericStep >= 1 && numericStep <= 7) {
+    marks.push('JP');
+  }
+  if (numericStep >= 8 && numericStep <= 16) {
+    marks.push('US');
+  }
+  return marks;
 }
 
 function renderSingleNodeStatus(nodeId, status) {
@@ -15675,6 +15993,20 @@ function syncCurrentIpProxyServiceProfileToLatestState() {
     ...(typeof buildIpProxyStatePatchFromServiceProfile === 'function'
       ? buildIpProxyStatePatchFromServiceProfile(selectedService, currentProfile)
       : {}),
+    settingsState: {
+      ...(latestState?.settingsState || {}),
+      services: {
+        ...(latestState?.settingsState?.services || {}),
+        proxy: {
+          ...(latestState?.settingsState?.services?.proxy || {}),
+          enabled: typeof getSelectedIpProxyEnabled === 'function'
+            ? getSelectedIpProxyEnabled()
+            : Boolean(latestState?.ipProxyEnabled),
+          provider: selectedService,
+          mode: currentProfile.mode,
+        },
+      },
+    },
   });
 }
 
@@ -15748,15 +16080,26 @@ selectIpProxyService?.addEventListener('change', () => {
   } else {
     setIpProxyMode(nextProfile.mode);
   }
+  const nextIsClashVerge = nextService === CLASH_VERGE_IP_PROXY_SERVICE;
+  if (nextIsClashVerge && inputClashProxySwitchEnabled) {
+    inputClashProxySwitchEnabled.checked = true;
+  }
+  if (nextIsClashVerge && inputClashProxyControlUrl && !String(inputClashProxyControlUrl.value || '').trim()) {
+    inputClashProxyControlUrl.value = DEFAULT_CLASH_PROXY_CONTROL_URL;
+  }
 
   syncLatestState({
     ipProxyService: nextService,
     ipProxyServiceProfiles: normalizedProfiles,
+    ...(nextIsClashVerge ? { clashProxySwitchEnabled: true } : {}),
     ...(typeof buildIpProxyStatePatchFromServiceProfile === 'function'
       ? buildIpProxyStatePatchFromServiceProfile(nextService, nextProfile)
       : {}),
   });
   updateIpProxyUI(latestState);
+  if (nextIsClashVerge) {
+    refreshClashProxyOptions({ silent: true }).catch(() => {});
+  }
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => {});
 });
@@ -15863,6 +16206,43 @@ btnIpProxyProbe?.addEventListener('click', async () => {
         await probeIpProxyExit();
         return { skipped: false };
       })();
+    if (result?.skipped) {
+      return;
+    }
+  } catch (err) {
+    showToast(err?.message || String(err || '未知错误'), 'error');
+  }
+});
+
+async function runClashProxyRegionProbe(region = '') {
+  const normalizedRegion = String(region || '').trim().toUpperCase();
+  const action = normalizedRegion === 'US' ? 'probe-us' : 'probe-jp';
+  const runner = async () => {
+    await saveSettings({ silent: true });
+    await probeClashProxyRegionExit(normalizedRegion);
+  };
+  return typeof runIpProxyActionWithLock === 'function'
+    ? runIpProxyActionWithLock(action, runner)
+    : (async () => {
+      await runner();
+      return { skipped: false };
+    })();
+}
+
+btnIpProxyProbeJp?.addEventListener('click', async () => {
+  try {
+    const result = await runClashProxyRegionProbe('JP');
+    if (result?.skipped) {
+      return;
+    }
+  } catch (err) {
+    showToast(err?.message || String(err || '未知错误'), 'error');
+  }
+});
+
+btnIpProxyProbeUs?.addEventListener('click', async () => {
+  try {
+    const result = await runClashProxyRegionProbe('US');
     if (result?.skipped) {
       return;
     }
@@ -16019,6 +16399,8 @@ inputCodex2ApiAdminKey.addEventListener('blur', () => {
   inputIpProxyHost,
   inputIpProxyUsername,
   inputIpProxyPassword,
+  inputClashProxyControlUrl,
+  inputClashProxySecret,
 ].forEach((input) => {
   input?.addEventListener('input', () => {
     markSettingsDirty(true);
@@ -16027,6 +16409,52 @@ inputCodex2ApiAdminKey.addEventListener('blur', () => {
   input?.addEventListener('blur', () => {
     saveSettings({ silent: true }).catch(() => {});
   });
+});
+
+inputClashProxyControlUrl?.addEventListener('blur', () => {
+  refreshClashProxyOptions({ silent: true }).catch(() => {});
+});
+
+inputClashProxySecret?.addEventListener('blur', () => {
+  refreshClashProxyOptions({ silent: true }).catch(() => {});
+});
+
+inputClashProxyGroup?.addEventListener('change', () => {
+  renderClashProxySelectors();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => {});
+});
+
+[
+  inputClashProxyJapanNodeFilter,
+  inputClashProxyUsNodeFilter,
+].forEach((input) => {
+  input?.addEventListener('input', () => {
+    renderClashProxySelectors();
+  });
+});
+
+[
+  inputClashProxyJapanNode,
+  inputClashProxyUsNode,
+].forEach((select) => {
+  select?.addEventListener('change', () => {
+    renderClashProxySelectors();
+    markSettingsDirty(true);
+    saveSettings({ silent: true }).catch(() => {});
+  });
+});
+
+btnRefreshClashProxyOptions?.addEventListener('click', () => {
+  refreshClashProxyOptions({ silent: false, refreshProviders: true }).catch(() => {});
+});
+
+inputClashProxySwitchEnabled?.addEventListener('change', () => {
+  markSettingsDirty(true);
+  if (typeof updateIpProxyUI === 'function') {
+    updateIpProxyUI(latestState);
+  }
+  saveSettings({ silent: true }).catch(() => {});
 });
 
 inputIpProxyUsername?.addEventListener('paste', () => {
@@ -17432,6 +17860,33 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         || message.payload.ipProxyAppliedExitSource !== undefined
         || message.payload.ipProxyAutoSyncEnabled !== undefined
         || message.payload.ipProxyAutoSyncIntervalMinutes !== undefined
+        || message.payload.clashProxySwitchEnabled !== undefined
+        || message.payload.clashProxyControlUrl !== undefined
+        || message.payload.clashProxySecret !== undefined
+        || message.payload.clashProxyGroup !== undefined
+        || message.payload.clashProxyJapanNode !== undefined
+        || message.payload.clashProxyJapanNodes !== undefined
+        || message.payload.clashProxyUsNode !== undefined
+        || message.payload.clashProxyUsNodes !== undefined
+        || message.payload.clashProxyLastRegion !== undefined
+        || message.payload.clashProxyLastNode !== undefined
+        || message.payload.clashProxyLastGroup !== undefined
+        || message.payload.clashProxyLastSwitchedAt !== undefined
+        || message.payload.clashProxyLastError !== undefined
+        || message.payload.clashProxyLastJapanProbeIp !== undefined
+        || message.payload.clashProxyLastJapanProbeRegion !== undefined
+        || message.payload.clashProxyLastJapanProbeNode !== undefined
+        || message.payload.clashProxyLastJapanProbeAt !== undefined
+        || message.payload.clashProxyLastJapanProbeMatched !== undefined
+        || message.payload.clashProxyLastJapanProbeError !== undefined
+        || message.payload.clashProxyLastJapanProbeDiagnostic !== undefined
+        || message.payload.clashProxyLastUsProbeIp !== undefined
+        || message.payload.clashProxyLastUsProbeRegion !== undefined
+        || message.payload.clashProxyLastUsProbeNode !== undefined
+        || message.payload.clashProxyLastUsProbeAt !== undefined
+        || message.payload.clashProxyLastUsProbeMatched !== undefined
+        || message.payload.clashProxyLastUsProbeError !== undefined
+        || message.payload.clashProxyLastUsProbeDiagnostic !== undefined
       ) {
         const hasIpProxyConfigPayload = (
           message.payload.ipProxyService !== undefined
@@ -17448,6 +17903,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           || message.payload.ipProxyUsername !== undefined
           || message.payload.ipProxyPassword !== undefined
           || message.payload.ipProxyRegion !== undefined
+          || message.payload.clashProxySwitchEnabled !== undefined
+          || message.payload.clashProxyControlUrl !== undefined
+          || message.payload.clashProxySecret !== undefined
+          || message.payload.clashProxyGroup !== undefined
+          || message.payload.clashProxyJapanNode !== undefined
+          || message.payload.clashProxyJapanNodes !== undefined
+          || message.payload.clashProxyUsNode !== undefined
+          || message.payload.clashProxyUsNodes !== undefined
         );
         const selectedProxyService = normalizeIpProxyService(
           message.payload.ipProxyService !== undefined
@@ -17486,6 +17949,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         if (message.payload.ipProxyApiUrl !== undefined && inputIpProxyApiUrl) {
           inputIpProxyApiUrl.value = String(message.payload.ipProxyApiUrl || '').trim();
+        }
+        if (message.payload.clashProxySwitchEnabled !== undefined && inputClashProxySwitchEnabled) {
+          inputClashProxySwitchEnabled.checked = selectedProxyService === CLASH_VERGE_IP_PROXY_SERVICE
+            ? true
+            : Boolean(message.payload.clashProxySwitchEnabled);
+        }
+        if (message.payload.clashProxyControlUrl !== undefined && inputClashProxyControlUrl) {
+          inputClashProxyControlUrl.value = String(message.payload.clashProxyControlUrl || DEFAULT_CLASH_PROXY_CONTROL_URL).trim();
+        }
+        if (message.payload.clashProxySecret !== undefined && inputClashProxySecret) {
+          inputClashProxySecret.value = String(message.payload.clashProxySecret || '');
+        }
+        if (message.payload.clashProxyGroup !== undefined && inputClashProxyGroup) {
+          setSelectOptions(inputClashProxyGroup, clashProxyOptionsState.groups, [String(message.payload.clashProxyGroup || DEFAULT_CLASH_PROXY_GROUP).trim()], '请选择代理组');
+        }
+        if ((message.payload.clashProxyJapanNode !== undefined || message.payload.clashProxyJapanNodes !== undefined) && inputClashProxyJapanNode) {
+          setSelectOptions(
+            inputClashProxyJapanNode,
+            getFilteredClashProxyNodes(inputClashProxyJapanNodeFilter),
+            normalizeClashProxyNodeList(message.payload.clashProxyJapanNodes, message.payload.clashProxyJapanNode || DEFAULT_CLASH_PROXY_JAPAN_NODE)
+          );
+        }
+        if ((message.payload.clashProxyUsNode !== undefined || message.payload.clashProxyUsNodes !== undefined) && inputClashProxyUsNode) {
+          setSelectOptions(
+            inputClashProxyUsNode,
+            getFilteredClashProxyNodes(inputClashProxyUsNodeFilter),
+            normalizeClashProxyNodeList(message.payload.clashProxyUsNodes, message.payload.clashProxyUsNode || DEFAULT_CLASH_PROXY_US_NODE)
+          );
         }
         if (hasIpProxyConfigPayload) {
           const activeProxyProfile = typeof getIpProxyServiceProfile === 'function'
@@ -17531,14 +18022,125 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             ...(typeof buildIpProxyStatePatchFromServiceProfile === 'function'
               ? buildIpProxyStatePatchFromServiceProfile(selectedProxyService, activeProxyProfile)
               : {}),
+            clashProxySwitchEnabled: selectedProxyService === CLASH_VERGE_IP_PROXY_SERVICE
+              ? true
+              : Boolean(mergedProxyState?.clashProxySwitchEnabled),
+            clashProxyControlUrl: String(mergedProxyState?.clashProxyControlUrl || DEFAULT_CLASH_PROXY_CONTROL_URL).trim(),
+            clashProxySecret: String(mergedProxyState?.clashProxySecret || ''),
+            clashProxyGroup: String(mergedProxyState?.clashProxyGroup || '').trim(),
+            clashProxyJapanNode: String(mergedProxyState?.clashProxyJapanNode || '').trim(),
+            clashProxyJapanNodes: normalizeClashProxyNodeList(mergedProxyState?.clashProxyJapanNodes, mergedProxyState?.clashProxyJapanNode),
+            clashProxyUsNode: String(mergedProxyState?.clashProxyUsNode || '').trim(),
+            clashProxyUsNodes: normalizeClashProxyNodeList(mergedProxyState?.clashProxyUsNodes, mergedProxyState?.clashProxyUsNode),
+            clashProxyLastRegion: String(mergedProxyState?.clashProxyLastRegion || '').trim(),
+            clashProxyLastNode: String(mergedProxyState?.clashProxyLastNode || '').trim(),
+            clashProxyLastGroup: String(mergedProxyState?.clashProxyLastGroup || '').trim(),
+            clashProxyLastSwitchedAt: Number(mergedProxyState?.clashProxyLastSwitchedAt) || 0,
+            clashProxyLastError: String(mergedProxyState?.clashProxyLastError || ''),
+            clashProxyLastJapanProbeIp: String(mergedProxyState?.clashProxyLastJapanProbeIp || '').trim(),
+            clashProxyLastJapanProbeRegion: String(mergedProxyState?.clashProxyLastJapanProbeRegion || '').trim(),
+            clashProxyLastJapanProbeNode: String(mergedProxyState?.clashProxyLastJapanProbeNode || '').trim(),
+            clashProxyLastJapanProbeAt: Number(mergedProxyState?.clashProxyLastJapanProbeAt) || 0,
+            clashProxyLastJapanProbeMatched: Boolean(mergedProxyState?.clashProxyLastJapanProbeMatched),
+            clashProxyLastJapanProbeError: String(mergedProxyState?.clashProxyLastJapanProbeError || ''),
+            clashProxyLastJapanProbeDiagnostic: String(mergedProxyState?.clashProxyLastJapanProbeDiagnostic || ''),
+            clashProxyLastUsProbeIp: String(mergedProxyState?.clashProxyLastUsProbeIp || '').trim(),
+            clashProxyLastUsProbeRegion: String(mergedProxyState?.clashProxyLastUsProbeRegion || '').trim(),
+            clashProxyLastUsProbeNode: String(mergedProxyState?.clashProxyLastUsProbeNode || '').trim(),
+            clashProxyLastUsProbeAt: Number(mergedProxyState?.clashProxyLastUsProbeAt) || 0,
+            clashProxyLastUsProbeMatched: Boolean(mergedProxyState?.clashProxyLastUsProbeMatched),
+            clashProxyLastUsProbeError: String(mergedProxyState?.clashProxyLastUsProbeError || ''),
+            clashProxyLastUsProbeDiagnostic: String(mergedProxyState?.clashProxyLastUsProbeDiagnostic || ''),
           });
         } else {
           syncLatestState({
             ipProxyService: selectedProxyService,
             ipProxyServiceProfiles: normalizedProxyProfiles,
+            ...(message.payload.clashProxySwitchEnabled !== undefined ? {
+              clashProxySwitchEnabled: Boolean(message.payload.clashProxySwitchEnabled),
+            } : {}),
+            ...(message.payload.clashProxyControlUrl !== undefined ? {
+              clashProxyControlUrl: String(message.payload.clashProxyControlUrl || DEFAULT_CLASH_PROXY_CONTROL_URL).trim(),
+            } : {}),
+            ...(message.payload.clashProxySecret !== undefined ? {
+              clashProxySecret: String(message.payload.clashProxySecret || ''),
+            } : {}),
+            ...(message.payload.clashProxyGroup !== undefined ? {
+              clashProxyGroup: String(message.payload.clashProxyGroup || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyJapanNode !== undefined ? {
+              clashProxyJapanNode: String(message.payload.clashProxyJapanNode || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyJapanNodes !== undefined ? {
+              clashProxyJapanNodes: normalizeClashProxyNodeList(message.payload.clashProxyJapanNodes, message.payload.clashProxyJapanNode),
+            } : {}),
+            ...(message.payload.clashProxyUsNode !== undefined ? {
+              clashProxyUsNode: String(message.payload.clashProxyUsNode || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyUsNodes !== undefined ? {
+              clashProxyUsNodes: normalizeClashProxyNodeList(message.payload.clashProxyUsNodes, message.payload.clashProxyUsNode),
+            } : {}),
+            ...(message.payload.clashProxyLastRegion !== undefined ? {
+              clashProxyLastRegion: String(message.payload.clashProxyLastRegion || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastNode !== undefined ? {
+              clashProxyLastNode: String(message.payload.clashProxyLastNode || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastGroup !== undefined ? {
+              clashProxyLastGroup: String(message.payload.clashProxyLastGroup || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastSwitchedAt !== undefined ? {
+              clashProxyLastSwitchedAt: Number(message.payload.clashProxyLastSwitchedAt) || 0,
+            } : {}),
+            ...(message.payload.clashProxyLastError !== undefined ? {
+              clashProxyLastError: String(message.payload.clashProxyLastError || ''),
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeIp !== undefined ? {
+              clashProxyLastJapanProbeIp: String(message.payload.clashProxyLastJapanProbeIp || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeRegion !== undefined ? {
+              clashProxyLastJapanProbeRegion: String(message.payload.clashProxyLastJapanProbeRegion || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeNode !== undefined ? {
+              clashProxyLastJapanProbeNode: String(message.payload.clashProxyLastJapanProbeNode || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeAt !== undefined ? {
+              clashProxyLastJapanProbeAt: Number(message.payload.clashProxyLastJapanProbeAt) || 0,
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeMatched !== undefined ? {
+              clashProxyLastJapanProbeMatched: Boolean(message.payload.clashProxyLastJapanProbeMatched),
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeError !== undefined ? {
+              clashProxyLastJapanProbeError: String(message.payload.clashProxyLastJapanProbeError || ''),
+            } : {}),
+            ...(message.payload.clashProxyLastJapanProbeDiagnostic !== undefined ? {
+              clashProxyLastJapanProbeDiagnostic: String(message.payload.clashProxyLastJapanProbeDiagnostic || ''),
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeIp !== undefined ? {
+              clashProxyLastUsProbeIp: String(message.payload.clashProxyLastUsProbeIp || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeRegion !== undefined ? {
+              clashProxyLastUsProbeRegion: String(message.payload.clashProxyLastUsProbeRegion || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeNode !== undefined ? {
+              clashProxyLastUsProbeNode: String(message.payload.clashProxyLastUsProbeNode || '').trim(),
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeAt !== undefined ? {
+              clashProxyLastUsProbeAt: Number(message.payload.clashProxyLastUsProbeAt) || 0,
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeMatched !== undefined ? {
+              clashProxyLastUsProbeMatched: Boolean(message.payload.clashProxyLastUsProbeMatched),
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeError !== undefined ? {
+              clashProxyLastUsProbeError: String(message.payload.clashProxyLastUsProbeError || ''),
+            } : {}),
+            ...(message.payload.clashProxyLastUsProbeDiagnostic !== undefined ? {
+              clashProxyLastUsProbeDiagnostic: String(message.payload.clashProxyLastUsProbeDiagnostic || ''),
+            } : {}),
           });
         }
         updateIpProxyUI(latestState);
+        renderClashProxySelectors();
       }
       if (message.payload.oauthUrl !== undefined) {
         displayOauthUrl.textContent = message.payload.oauthUrl || '等待中...';

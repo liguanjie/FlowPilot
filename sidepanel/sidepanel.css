@@ -940,6 +940,37 @@ header {
   white-space: nowrap;
 }
 
+.clash-proxy-node-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.clash-proxy-node-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.clash-proxy-node-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.clash-proxy-node-select {
+  min-height: 132px;
+  overflow: auto;
+}
+
+.clash-proxy-options-status {
+  font-size: 12px;
+}
+
 .ip-proxy-fold {
   width: 100%;
   border: none;
@@ -1044,6 +1075,10 @@ header {
 @media (max-width: 900px) {
   .ip-proxy-layout {
     display: block;
+  }
+
+  .clash-proxy-node-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -2866,9 +2901,54 @@ header {
   border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
   transition: all var(--transition);
   box-shadow: var(--shadow-sm);
 }
+
+.step-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-region-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.step-region-mark {
+  min-width: 22px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--bg-field);
+}
+
+.step-region-jp {
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.28);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.step-region-us {
+  color: var(--blue);
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.08);
+}
+
 .step-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--blue); }
 .step-btn:disabled { color: var(--text-muted); background: var(--bg-base); border-color: var(--border-subtle); cursor: not-allowed; opacity: 0.45; box-shadow: none; }
 

@@ -16,6 +16,7 @@
       clearStopRequest,
       createAutoRunSessionId,
       ensureHotmailMailboxReadyForAutoRunRound,
+      refreshClashProxySubscriptionsForAutoRunRound,
       getAutoRunStatusPayload,
       getErrorMessage,
       getFirstUnfinishedNodeId,
@@ -646,13 +647,20 @@
               sessionId,
             });
 
-            if (!useExistingProgress && startNodeId === defaultStartNodeId && typeof ensureHotmailMailboxReadyForAutoRunRound === 'function') {
-              await ensureHotmailMailboxReadyForAutoRunRound({
+            const roundStartContext = {
                 targetRun,
                 totalRuns,
                 attemptRun,
                 sessionId,
-              });
+            };
+            if (!useExistingProgress && startNodeId === defaultStartNodeId && attemptRun === 1) {
+              if (typeof refreshClashProxySubscriptionsForAutoRunRound === 'function') {
+                await refreshClashProxySubscriptionsForAutoRunRound(roundStartContext);
+              }
+            }
+
+            if (!useExistingProgress && startNodeId === defaultStartNodeId && typeof ensureHotmailMailboxReadyForAutoRunRound === 'function') {
+              await ensureHotmailMailboxReadyForAutoRunRound(roundStartContext);
             }
 
             await runAutoSequenceFromWorkflowNode(startNodeId, {

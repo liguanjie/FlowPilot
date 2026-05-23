@@ -60,7 +60,10 @@ test('settings schema normalizes view input into canonical nested namespaces', (
     targetId: 'kiro-rs',
     mailProvider: 'hotmail',
     ipProxyEnabled: true,
-    ipProxyService: '711proxy',
+    ipProxyService: 'clash-verge',
+    clashProxyGroup: '寿司云',
+    clashProxyJapanNodes: ['日本 04 家宽 4倍流量 softbank', '日本家宽1 | 4倍流量 | softbank'],
+    clashProxyUsNodes: ['VIP美国家宽4 | 4倍流量', '美国 01'],
     customPassword: 'SharedSecret123!',
     plusAccountAccessStrategy: 'sub2api_codex_session',
     kiroRsUrl: 'https://kiro.example.com/admin',
@@ -74,6 +77,8 @@ test('settings schema normalizes view input into canonical nested namespaces', (
   assert.equal(normalized.activeFlowId, 'kiro');
   assert.equal(normalized.services.email.provider, 'hotmail');
   assert.equal(normalized.services.proxy.enabled, true);
+  assert.equal(normalized.services.proxy.clash.group, '寿司云');
+  assert.deepEqual(normalized.services.proxy.clash.japanNodes, ['日本 04 家宽 4倍流量 softbank', '日本家宽1 | 4倍流量 | softbank']);
   assert.equal(normalized.services.account.customPassword, 'SharedSecret123!');
   assert.equal(normalized.flows.openai.selectedTargetId, 'cpa');
   assert.equal(normalized.flows.openai.plus.plusAccountAccessStrategy, 'sub2api_codex_session');
@@ -128,6 +133,7 @@ test('settings schema can project canonical state into a read view without legac
   assert.equal(view.kiroRsUrl, 'https://kiro.example.com/admin');
   assert.equal(view.kiroRsKey, 'key-123');
   assert.equal(view.plusAccountAccessStrategy, 'sub2api_codex_session');
+  assert.deepEqual(view.clashProxyJapanNodes, ['日本 07']);
   assert.equal(view.settingsSchemaVersion, 5);
   assert.equal(view.settingsState.activeFlowId, 'kiro');
 });

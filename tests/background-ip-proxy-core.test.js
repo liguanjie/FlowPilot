@@ -8,9 +8,9 @@ function loadIpProxyCore({ accountListEnabled = true } = {}) {
   return new Function(`
 const self = {};
 const chrome = {};
-const DEFAULT_IP_PROXY_SERVICE = '711proxy';
-const IP_PROXY_SERVICE_VALUES = ['711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
-const IP_PROXY_ENABLED_SERVICE_VALUES = ['711proxy'];
+const DEFAULT_IP_PROXY_SERVICE = 'clash-verge';
+const IP_PROXY_SERVICE_VALUES = ['clash-verge', '711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
+const IP_PROXY_ENABLED_SERVICE_VALUES = ['clash-verge', '711proxy'];
 const DEFAULT_IP_PROXY_MODE = 'account';
 const IP_PROXY_MODE_VALUES = ['api', 'account'];
 const DEFAULT_IP_PROXY_PROTOCOL = 'http';
@@ -49,7 +49,9 @@ return {
   buildIpProxyRoutingStatePatch,
   applyTargetReachabilityExpectation,
   getAccountModeProxyPoolFromState,
+  getIpProxyCurrentEntryFromState,
   normalizeIpProxyAccountList,
+  normalizeIpProxyProviderValue,
   normalizeProxyPoolEntries,
   parseProxyExitProbePayload,
   parseIpProxyLine,
@@ -80,7 +82,7 @@ test('IP proxy parser ignores disabled lines and normalizes proxy entries', () =
     'http://global.rotgb.711proxy.com:10000:user:pa:ss',
     'http://global.rotgb.711proxy.com:10000:user:pa:ss',
     { host: 'us.proxy.example', port: '8080', username: 'u2', password: 'p2' },
-  ]);
+  ], '711proxy');
 
   assert.equal(pool.length, 2);
   assert.deepStrictEqual(pool[0], {
@@ -226,6 +228,29 @@ test('IP proxy PAC keeps local traffic direct and routes target traffic through 
   assert.doesNotMatch(pac, /PROXY 127\.0\.0\.1:7897; DIRECT/);
 });
 
+test('Clash Verge service is the default local proxy provider', () => {
+  const api = loadIpProxyCore();
+
+  assert.equal(api.normalizeIpProxyProviderValue(''), 'clash-verge');
+  assert.equal(api.normalizeIpProxyProviderValue('711proxy'), '711proxy');
+  assert.deepEqual(api.getIpProxyCurrentEntryFromState({
+    ipProxyService: 'clash-verge',
+    ipProxyMode: 'account',
+    clashProxyLastRegion: 'JP',
+  }), {
+    host: '127.0.0.1',
+    port: 7897,
+    username: '',
+    password: '',
+    protocol: 'http',
+    region: 'JP',
+    provider: 'clash-verge',
+  });
+  assert.equal(api.getAccountModeProxyPoolFromState({
+    ipProxyService: 'clash-verge',
+  }).length, 1);
+});
+
 test('sidepanel loads IP proxy scripts before sidepanel bootstrap', () => {
   const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
   const providerIndex = html.indexOf('<script src="ip-proxy-provider-711proxy.js"></script>');
@@ -237,6 +262,17 @@ test('sidepanel loads IP proxy scripts before sidepanel bootstrap', () => {
   assert.notEqual(sidepanelIndex, -1);
   assert.ok(providerIndex < panelIndex);
   assert.ok(panelIndex < sidepanelIndex);
+
+  assert.match(html, /<option value="clash-verge">Clash Verge 本地服务<\/option>/);
+  assert.match(html, /id="input-clash-proxy-switch-enabled"/);
+  assert.match(html, /id="input-clash-proxy-control-url"/);
+  assert.match(html, /id="btn-refresh-clash-proxy-options"/);
+  assert.match(html, /id="input-clash-proxy-japan-node-filter"/);
+  assert.match(html, /id="input-clash-proxy-us-node-filter"/);
+  assert.match(html, /id="input-clash-proxy-japan-node"[^>]*multiple/);
+  assert.match(html, /id="input-clash-proxy-us-node"[^>]*multiple/);
+  assert.match(html, /id="btn-ip-proxy-probe-jp"/);
+  assert.match(html, /id="btn-ip-proxy-probe-us"/);
 });
 
 test('IP proxy auto-switch threshold is clamped to the supported range', () => {

@@ -71,8 +71,18 @@
           },
           proxy: {
             enabled: false,
-            provider: '711proxy',
+            provider: 'clash-verge',
             mode: 'account',
+            clash: {
+              switchEnabled: true,
+              controlUrl: 'http://127.0.0.1:9097',
+              secret: '',
+              group: '寿司云',
+              japanNode: '日本 07',
+              japanNodes: ['日本 07'],
+              usNode: '美国 01',
+              usNodes: ['美国 01'],
+            },
           },
         },
         flows: {
@@ -210,6 +220,68 @@
               ?? input?.ipProxyMode
               ?? defaults.services.proxy.mode
             ).trim() || defaults.services.proxy.mode,
+            clash: (() => {
+              const clashSource = isPlainObject(nested?.services?.proxy?.clash)
+                ? nested.services.proxy.clash
+                : {};
+              const normalizeNodeList = (value, fallback) => {
+                const raw = Array.isArray(value)
+                  ? value
+                  : String(value || '').split(/[\n,，;；]+/g);
+                const seen = new Set();
+                const result = [];
+                raw.forEach((entry) => {
+                  const node = String(entry || '').trim();
+                  const key = node.toLowerCase();
+                  if (node && !seen.has(key)) {
+                    seen.add(key);
+                    result.push(node);
+                  }
+                });
+                const fallbackNode = String(fallback || '').trim();
+                return result.length ? result : (fallbackNode ? [fallbackNode] : []);
+              };
+              const japanNode = String(
+                input?.clashProxyJapanNode
+                ?? clashSource.japanNode
+                ?? defaults.services.proxy.clash.japanNode
+              ).trim();
+              const usNode = String(
+                input?.clashProxyUsNode
+                ?? clashSource.usNode
+                ?? defaults.services.proxy.clash.usNode
+              ).trim();
+              const japanNodes = normalizeNodeList(
+                input?.clashProxyJapanNodes ?? clashSource.japanNodes,
+                japanNode
+              );
+              const usNodes = normalizeNodeList(
+                input?.clashProxyUsNodes ?? clashSource.usNodes,
+                usNode
+              );
+              return {
+                switchEnabled: Boolean(
+                  input?.clashProxySwitchEnabled
+                  ?? clashSource.switchEnabled
+                  ?? defaults.services.proxy.clash.switchEnabled
+                ),
+                controlUrl: String(
+                  input?.clashProxyControlUrl
+                  ?? clashSource.controlUrl
+                  ?? defaults.services.proxy.clash.controlUrl
+                ).trim() || defaults.services.proxy.clash.controlUrl,
+                secret: String(input?.clashProxySecret ?? clashSource.secret ?? ''),
+                group: String(
+                  input?.clashProxyGroup
+                  ?? clashSource.group
+                  ?? defaults.services.proxy.clash.group
+                ).trim() || defaults.services.proxy.clash.group,
+                japanNode: japanNodes[0] || japanNode,
+                japanNodes,
+                usNode: usNodes[0] || usNode,
+                usNodes,
+              };
+            })(),
           },
           account: {
             customPassword: String(
@@ -523,6 +595,14 @@
       next.ipProxyEnabled = normalizedState.services.proxy.enabled;
       next.ipProxyService = normalizedState.services.proxy.provider;
       next.ipProxyMode = normalizedState.services.proxy.mode;
+      next.clashProxySwitchEnabled = normalizedState.services.proxy.clash.switchEnabled;
+      next.clashProxyControlUrl = normalizedState.services.proxy.clash.controlUrl;
+      next.clashProxySecret = normalizedState.services.proxy.clash.secret;
+      next.clashProxyGroup = normalizedState.services.proxy.clash.group;
+      next.clashProxyJapanNode = normalizedState.services.proxy.clash.japanNode;
+      next.clashProxyJapanNodes = cloneValue(normalizedState.services.proxy.clash.japanNodes);
+      next.clashProxyUsNode = normalizedState.services.proxy.clash.usNode;
+      next.clashProxyUsNodes = cloneValue(normalizedState.services.proxy.clash.usNodes);
       next.kiroRsUrl = kiroState.targets['kiro-rs'].baseUrl;
       next.kiroRsKey = kiroState.targets['kiro-rs'].apiKey;
       next.stepExecutionRangeByFlow = buildStepExecutionRangeByFlow(normalizedState);
