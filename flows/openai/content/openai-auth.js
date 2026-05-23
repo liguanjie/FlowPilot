@@ -735,24 +735,6 @@ function inspectSignupEntryState() {
     };
   }
 
-  const postVerificationState = typeof getStep4PostVerificationState === 'function'
-    ? getStep4PostVerificationState()
-    : null;
-  if (postVerificationState?.state === 'step5') {
-    return {
-      state: 'profile_page',
-      url: postVerificationState.url || location.href,
-    };
-  }
-
-  if (postVerificationState?.state === 'logged_in_home') {
-    return {
-      state: 'logged_in_home',
-      skipProfileStep: true,
-      url: postVerificationState.url || location.href,
-    };
-  }
-
   if (typeof isVerificationPageStillVisible === 'function' && isVerificationPageStillVisible()) {
     return {
       state: 'verification_page',
@@ -791,6 +773,24 @@ function inspectSignupEntryState() {
       phoneInput,
       switchToEmailTrigger: findSignupUseEmailTrigger(),
       url: location.href,
+    };
+  }
+
+  const postVerificationState = typeof getStep4PostVerificationState === 'function'
+    ? getStep4PostVerificationState()
+    : null;
+  if (postVerificationState?.state === 'step5') {
+    return {
+      state: 'profile_page',
+      url: postVerificationState.url || location.href,
+    };
+  }
+
+  if (postVerificationState?.state === 'logged_in_home') {
+    return {
+      state: 'logged_in_home',
+      skipProfileStep: true,
+      url: postVerificationState.url || location.href,
     };
   }
 
@@ -2922,6 +2922,14 @@ function isLikelyLoggedInChatgptHomeUrl(rawUrl = location.href) {
 
     const path = String(parsed.pathname || '');
     if (/^\/(?:auth\/|create-account\/|email-verification|log-in|add-phone)(?:[/?#]|$)/i.test(path)) {
+      return false;
+    }
+
+    if (
+      typeof getSignupEmailInput === 'function' && getSignupEmailInput()
+      || typeof getSignupPhoneInput === 'function' && getSignupPhoneInput()
+      || typeof getSignupPasswordInput === 'function' && getSignupPasswordInput()
+    ) {
       return false;
     }
 

@@ -2261,10 +2261,127 @@ return {
 };
 `)();
 
-  const result = await api.run();
+const result = await api.run();
 
   assert.equal(result.submitted, true);
   assert.equal(result.phoneInputValue, '959916439');
   assert.deepEqual(api.getClicks(), ['Continue with phone number', 'Continue']);
   assert.deepEqual(api.getFilled(), [{ target: 'phone', value: '959916439' }]);
 });
+
+test('inspectSignupEntryState treats unified ChatGPT auth login email form as email entry', () => {
+  const api = new Function(`
+const emailInput = {
+  kind: 'email',
+  getAttribute(name) {
+    if (name === 'type') return 'text';
+    if (name === 'placeholder') return 'Email address';
+    return '';
+  },
+};
+
+const continueButton = {
+  textContent: 'Continue',
+  value: '',
+  disabled: false,
+  getAttribute(name) {
+    if (name === 'type') return 'submit';
+    return '';
+  },
+};
+
+const document = {
+  body: {
+    innerText: 'Log in or sign up Continue with Google Continue with Apple Continue with phone OR Email address Continue',
+    textContent: '',
+  },
+  querySelector(selector) {
+    if (selector === SIGNUP_EMAIL_INPUT_SELECTOR || /input\\[placeholder\\*=/.test(selector)) {
+      return emailInput;
+    }
+    if (selector === 'button[type="submit"], input[type="submit"]') {
+      return continueButton;
+    }
+    return null;
+  },
+  querySelectorAll(selector) {
+    if (selector === 'input') {
+      return [emailInput];
+    }
+    if (selector.includes('button')) {
+      return [continueButton];
+    }
+    return [];
+  },
+};
+
+const location = {
+  href: 'https://chatgpt.com/auth/login',
+};
+
+${extractConst('SIGNUP_ENTRY_TRIGGER_PATTERN')}
+${extractConst('SIGNUP_EMAIL_INPUT_SELECTOR')}
+${extractConst('SIGNUP_PHONE_INPUT_SELECTOR')}
+${extractConst('SIGNUP_SWITCH_TO_EMAIL_PATTERN')}
+${extractConst('SIGNUP_SWITCH_ACTION_PATTERN')}
+${extractConst('SIGNUP_EMAIL_ACTION_PATTERN')}
+${extractConst('SIGNUP_PHONE_ACTION_PATTERN')}
+${extractConst('SIGNUP_SWITCH_TO_PHONE_PATTERN')}
+${extractConst('SIGNUP_MORE_OPTIONS_PATTERN')}
+${extractConst('SIGNUP_WORK_EMAIL_PATTERN')}
+
+function isVisibleElement(el) {
+  return Boolean(el);
+}
+
+function isActionEnabled(el) {
+  return Boolean(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+}
+
+function getActionText(el) {
+  return [el?.textContent, el?.value, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title')]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+}
+
+function getVisibleFieldErrorText() { return ''; }
+function getSignupPasswordFieldErrorText() { return ''; }
+function getSignupPasswordInput() { return null; }
+function getSignupPasswordSubmitButton() { return null; }
+function isSignupPasswordPage() { return false; }
+function isPhoneVerificationPageReady() { return false; }
+function isVerificationPageStillVisible() { return false; }
+function getStep4PostVerificationState() { return { state: 'logged_in_home', url: location.href }; }
+
+${extractFunction('getSignupEmailInput')}
+${extractFunction('getSignupPhoneInput')}
+${extractFunction('findSignupUseEmailTrigger')}
+${extractFunction('findSignupUsePhoneTrigger')}
+${extractFunction('findSignupEntryTrigger')}
+${extractFunction('findSignupMoreOptionsTrigger')}
+${extractFunction('getSignupEmailContinueButton')}
+${extractFunction('inspectSignupEntryState')}
+
+return {
+  run() {
+    return inspectSignupEntryState();
+  },
+};
+`)();
+
+  const snapshot = api.run();
+
+  assert.equal(snapshot.state, 'email_entry');
+  assert.equal(snapshot.emailInput.kind, 'email');
+  assert.equal(getActionTextForTest(snapshot.continueButton), 'Continue');
+});
+
+function getActionTextForTest(el) {
+  return [el?.textContent, el?.value, el?.getAttribute?.('aria-label'), el?.getAttribute?.('title')]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
