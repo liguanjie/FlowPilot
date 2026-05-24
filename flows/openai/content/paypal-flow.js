@@ -28,6 +28,7 @@ if (document.documentElement.getAttribute(PAYPAL_FLOW_LISTENER_SENTINEL) !== '1'
       || message.type === 'PAYPAL_DISMISS_PROMPTS'
       || message.type === 'PAYPAL_CLICK_APPROVE'
       || message.type === 'PAYPAL_HOSTED_GET_STATE'
+      || message.type === 'PAYPAL_HOSTED_SUBMIT_SECURITY_CODE'
       || message.type === 'PAYPAL_RUN_HOSTED_CHECKOUT_STEP'
     ) {
       resetStopState();
@@ -65,6 +66,8 @@ async function handlePayPalCommand(message) {
       return clickPayPalApprove();
     case 'PAYPAL_HOSTED_GET_STATE':
       return inspectPayPalHostedState();
+    case 'PAYPAL_HOSTED_SUBMIT_SECURITY_CODE':
+      return submitPayPalHostedSecurityCode(message.payload || {});
     case 'PAYPAL_RUN_HOSTED_CHECKOUT_STEP':
       return runPayPalHostedCheckoutStep(message.payload || {});
     default:
@@ -306,6 +309,105 @@ function findHostedReviewConsentButton() {
     /agree\s*(?:and)?\s*continue|accept|continue/i,
     /同意并继续|同意|继续/i,
   ]);
+}
+
+function getPayPalHostedSecurityChallengeText() {
+  return normalizeText(document.body?.innerText || document.body?.textContent || '');
+}
+
+function isPayPalHostedRecaptchaChallengeVisible() {
+  const text = getPayPalHostedSecurityChallengeText();
+  return /security\s+challenge|i['’]?m\s+not\s+a\s+robot|recaptcha|select\s+all\s+images/i.test(text)
+    && !isPayPalHostedSmsCodeVisible();
+}
+
+function findPayPalHostedSmsCodeInputs() {
+  const text = getPayPalHostedSecurityChallengeText();
+  if (!/enter\s+your\s+code|6[-\s]*digit\s+code|security\s+code|we\s+sent\s+a\s+\d?[-\s]*digit\s+code/i.test(text)) {
+    return [];
+  }
+
+  const visibleInputs = getVisibleControls('input').filter((input) => {
+    if (!isEnabledControl(input)) return false;
+    const type = String(input.getAttribute?.('type') || input.type || '').trim().toLowerCase();
+    return !['hidden', 'checkbox', 'radio', 'submit', 'button', 'file', 'password', 'email'].includes(type);
+  });
+
+  const codeLikeInputs = visibleInputs.filter((input) => {
+    const metadataText = normalizeText([
+      input?.id,
+      input?.name,
+      input?.getAttribute?.('aria-label'),
+      input?.getAttribute?.('autocomplete'),
+      input?.getAttribute?.('placeholder'),
+      input?.getAttribute?.('data-testid'),
+    ].filter(Boolean).join(' '));
+    const maxLength = Number(input?.maxLength || input?.getAttribute?.('maxlength') || 0);
+    return /code|otp|pin|verification|security|passcode/i.test(metadataText)
+      || maxLength === 1
+      || maxLength === 6;
+  });
+
+  if (codeLikeInputs.length) {
+    return codeLikeInputs;
+  }
+  return visibleInputs.length <= 8 ? visibleInputs : [];
+}
+
+function isPayPalHostedSmsCodeVisible() {
+  return findPayPalHostedSmsCodeInputs().length > 0;
+}
+
+function findPayPalHostedSmsCodeSubmitButton() {
+  return findClickableByText([
+    /verify|continue|submit|next|confirm/i,
+    /\u9a8c\u8bc1|\u786e\u8ba4|\u7ee7\u7eed|\u4e0b\u4e00\u6b65/i,
+  ]);
+}
+
+async function submitPayPalHostedSecurityCode(payload = {}) {
+  const code = String(payload.code || payload.otp || '').replace(/\D/g, '');
+  if (!/^\d{6}$/.test(code)) {
+    throw new Error('PayPal hosted checkout security code must be 6 digits.');
+  }
+  const inputs = findPayPalHostedSmsCodeInputs();
+  if (!inputs.length) {
+    throw new Error('PayPal hosted checkout 未检测到可填写的短信验证码输入框。');
+  }
+
+  await performPayPalOperationWithDelay({
+    stepKey: getHostedStepKey(PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT),
+    kind: 'input',
+    label: 'hosted-paypal-security-code',
+  }, async () => {
+    if (inputs.length >= 6) {
+      code.split('').forEach((digit, index) => {
+        if (inputs[index]) {
+          fillInput(inputs[index], digit);
+        }
+      });
+      return;
+    }
+    fillInput(inputs[0], code);
+  });
+
+  const submitButton = findPayPalHostedSmsCodeSubmitButton();
+  if (submitButton && isVisibleElement(submitButton) && isEnabledControl(submitButton)) {
+    await performPayPalOperationWithDelay({
+      stepKey: getHostedStepKey(PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT),
+      kind: 'click',
+      label: 'hosted-paypal-security-code-submit',
+    }, async () => {
+      simulateClick(submitButton);
+    });
+  }
+  await sleep(1000);
+  return {
+    submitted: true,
+    codeDigits: code.length,
+    inputCount: inputs.length,
+    clickedSubmit: Boolean(submitButton),
+  };
 }
 
 function detectPayPalHostedStage() {
@@ -662,6 +764,9 @@ function inspectPayPalHostedState() {
     createAccountReady: Boolean(createAccountButton && isVisibleElement(createAccountButton) && isEnabledControl(createAccountButton)),
     reviewConsentReady: Boolean(findHostedReviewConsentButton()),
     approveReady: Boolean(findApproveButton()),
+    paypalSecurityChallengeVisible: isPayPalHostedRecaptchaChallengeVisible(),
+    paypalSmsCodeVisible: isPayPalHostedSmsCodeVisible(),
+    paypalSmsCodeInputCount: findPayPalHostedSmsCodeInputs().length,
     bodyTextPreview: normalizeText(document.body?.innerText || '').slice(0, 240),
   };
 }

@@ -63,3 +63,52 @@ test('logging/status add-phone detection ignores step 2 phone-entry switch failu
     false
   );
 });
+
+test('logging/status resolves log step and message prefix from current node key', async () => {
+  const source = fs.readFileSync('core/flow-kernel/logging-status.js', 'utf8');
+  const sentMessages = [];
+  const savedState = { logs: [], nodeStatuses: {} };
+  const globalScope = {};
+  const api = new Function('self', `${source}; return self.MultiPageBackgroundLoggingStatus;`)(globalScope);
+
+  const loggingStatus = api.createLoggingStatus({
+    chrome: { runtime: { sendMessage(message) { sentMessages.push(message); return Promise.resolve(); } } },
+    DEFAULT_STATE: { nodeStatuses: {} },
+    getStepIdByKeyForState: (stepKey) => ({
+      'plus-checkout-create': 7,
+      'plus-checkout-open': 8,
+      'paypal-hosted-card': 10,
+    })[stepKey] || null,
+    getStepIdByNodeIdForState: (nodeId) => ({
+      'plus-checkout-create': 7,
+      'plus-checkout-open': 8,
+      'paypal-hosted-card': 10,
+    })[nodeId] || null,
+    getState: async () => ({
+      plusModeEnabled: true,
+      plusPaymentMethod: 'paypal-hosted',
+      logs: savedState.logs,
+      nodeStatuses: {},
+    }),
+    isRecoverableStep9AuthFailure: () => false,
+    LOG_PREFIX: '[test]',
+    setState: async (patch) => { Object.assign(savedState, patch); },
+    STOP_ERROR_MESSAGE: 'stopped',
+  });
+
+  await loggingStatus.addLog('步骤 6：正在等待 ChatGPT 页面完成加载', 'info', {
+    step: 6,
+    stepKey: 'plus-checkout-create',
+  });
+  await loggingStatus.addLog('步骤 8：已从最新状态恢复 PayPal 支付长链接', 'info', {
+    step: 6,
+    nodeId: 'plus-checkout-open',
+  });
+
+  assert.equal(savedState.logs[0].step, 7);
+  assert.equal(savedState.logs[0].message, '步骤 7：正在等待 ChatGPT 页面完成加载');
+  assert.equal(savedState.logs[1].step, 8);
+  assert.equal(savedState.logs[1].message, '步骤 8：已从最新状态恢复 PayPal 支付长链接');
+  assert.equal(sentMessages[0].payload.step, 7);
+  assert.equal(sentMessages[1].payload.step, 8);
+});

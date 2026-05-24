@@ -734,6 +734,116 @@ test('PayPal hosted email node completes when Next navigation drops the content 
   );
 });
 
+test('PayPal hosted card node submits direct-bind SMS code before completing next stage', async () => {
+  const events = [];
+  let currentUrl = 'https://www.paypal.com/checkoutweb/signup?token=EC-test';
+  let hostedStateCallCount = 0;
+  const executor = api.createPlusCheckoutCreateExecutor({
+    addLog: async (message, level = 'info', options = {}) => events.push({ type: 'log', message, level, options }),
+    chrome: {
+      tabs: {
+        get: async (tabId) => ({ id: tabId, url: currentUrl, status: 'complete' }),
+      },
+    },
+    completeNodeFromBackground: async (step, payload) => events.push({ type: 'complete', step, payload }),
+    ensureContentScriptReadyOnTabUntilStopped: async (source, tabId, options) => events.push({ type: 'ready', source, tabId, options }),
+    fetch: async (url) => {
+      events.push({ type: 'fetch', url });
+      if (String(url).startsWith('https://mail-api.yuecheng.shop/api/public/message')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            code: 200,
+            msg: 'OK',
+            data: "PayPal: 407838 is your security code. Don't share it.",
+          }),
+        };
+      }
+      if (String(url) === 'https://www.meiguodizhi.com/api/v1/dz') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            address: {
+              Address: '1 Main St',
+              City: 'New York',
+              State: 'New York',
+              Zip_Code: '10001',
+            },
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    },
+    getState: async () => ({
+      hostedCheckoutVerificationUrl: 'https://mail-api.yuecheng.shop/api/public/message?key=eca_tr_x1',
+      hostedCheckoutPhoneNumber: '(582) 262-9764',
+    }),
+    registerTab: async (source, tabId) => events.push({ type: 'register', source, tabId }),
+    sendTabMessageUntilStopped: async (tabId, source, message) => {
+      events.push({ type: 'tab-message', tabId, source, message });
+      if (message.type === 'PAYPAL_RUN_HOSTED_CHECKOUT_STEP') {
+        return { stage: 'guest_checkout', submitted: true, phoneMatched: true, payloadPhoneDigits: '5822629764', renderedPhoneDigits: '15822629764' };
+      }
+      if (message.type === 'PAYPAL_HOSTED_GET_STATE') {
+        hostedStateCallCount += 1;
+        if (hostedStateCallCount === 1) {
+          return {
+            hostedStage: 'guest_checkout',
+            paypalSmsCodeVisible: true,
+            paypalSmsCodeInputCount: 6,
+            paypalSecurityChallengeVisible: false,
+          };
+        }
+        return {
+          hostedStage: 'create_account',
+          paypalSmsCodeVisible: false,
+          paypalSecurityChallengeVisible: false,
+        };
+      }
+      if (message.type === 'PAYPAL_HOSTED_SUBMIT_SECURITY_CODE') {
+        assert.equal(message.payload.code, '407838');
+        return { submitted: true, inputCount: 6, clickedSubmit: true };
+      }
+      throw new Error(`unexpected message type ${message.type}`);
+    },
+    setState: async (payload) => events.push({ type: 'set-state', payload }),
+    sleepWithStop: async (ms) => events.push({ type: 'sleep', ms }),
+    waitForTabCompleteUntilStopped: async () => events.push({ type: 'tab-complete' }),
+  });
+
+  await executor.executePayPalHostedCard({
+    plusCheckoutTabId: 77,
+    plusPaymentMethod: 'paypal-hosted',
+    plusHostedCheckoutGuestProfile: {
+      email: 'guest@example.com',
+      phone: '5822629764',
+      cardNumber: '4147200000000000',
+      cardExpiry: '12 / 29',
+      cardCvv: '123',
+      password: 'Aa1!example',
+      firstName: 'James',
+      lastName: 'Smith',
+      address: { street: '1 Main St', city: 'New York', state: 'New York', zip: '10001' },
+    },
+    hostedCheckoutVerificationUrl: 'https://mail-api.yuecheng.shop/api/public/message?key=eca_tr_x1',
+  });
+
+  assert.equal(
+    events.some((event) => event.type === 'tab-message' && event.message.type === 'PAYPAL_HOSTED_SUBMIT_SECURITY_CODE'),
+    true
+  );
+  assert.equal(
+    events.some((event) => event.type === 'log' && /已获取 PayPal 直绑验证码/.test(event.message)),
+    true
+  );
+  assert.equal(
+    events.some((event) => event.type === 'complete' && event.step === 'paypal-hosted-card'),
+    true
+  );
+});
+
 test('Plus checkout content routes billing operations through the operation delay gate', async () => {
   const { checkoutEvents, send } = createCheckoutContentHarness();
 

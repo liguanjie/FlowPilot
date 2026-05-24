@@ -5,6 +5,7 @@
     const {
       chrome,
       DEFAULT_STATE,
+      getStepIdByKeyForState,
       getStepIdByNodeIdForState,
       getState,
       isRecoverableStep9AuthFailure,
@@ -47,13 +48,44 @@
       return step > 0 ? step : null;
     }
 
-    function buildLogEntry(message, level = 'info', options = {}) {
+    function normalizeStepPrefix(message = '', step = null) {
+      const text = String(message || '');
+      if (!step) {
+        return text;
+      }
+      return text.replace(/^(\s*)步骤\s*\d+(\s*[：:])/, `$1步骤 ${step}$2`);
+    }
+
+    function resolveLogStep(normalizedOptions = {}, state = {}) {
+      const nodeId = String(
+        normalizedOptions.nodeId
+        || normalizedOptions.nodeKey
+        || normalizedOptions.stepKey
+        || ''
+      ).trim();
+      if (nodeId && typeof getStepIdByNodeIdForState === 'function') {
+        const nodeStep = normalizeLogStep(getStepIdByNodeIdForState(nodeId, state));
+        if (nodeStep) {
+          return nodeStep;
+        }
+      }
+      const stepKey = String(normalizedOptions.stepKey || '').trim();
+      if (stepKey && typeof getStepIdByKeyForState === 'function') {
+        const keyStep = normalizeLogStep(getStepIdByKeyForState(stepKey, state));
+        if (keyStep) {
+          return keyStep;
+        }
+      }
+      return normalizeLogStep(normalizedOptions.step);
+    }
+
+    function buildLogEntry(message, level = 'info', options = {}, state = {}) {
       const normalizedOptions = options && typeof options === 'object' ? options : {};
-      const step = normalizeLogStep(normalizedOptions.step);
       const stepKey = String(normalizedOptions.stepKey || '').trim();
       const nodeId = String(normalizedOptions.nodeId || normalizedOptions.nodeKey || stepKey || '').trim();
+      const step = resolveLogStep(normalizedOptions, state);
       return {
-        message: String(message || ''),
+        message: normalizeStepPrefix(message, step),
         level,
         timestamp: Date.now(),
         step,
@@ -65,7 +97,7 @@
     async function addLog(message, level = 'info', options = {}) {
       const state = await getState();
       const logs = state.logs || [];
-      const entry = buildLogEntry(message, level, options);
+      const entry = buildLogEntry(message, level, options, state);
       logs.push(entry);
       if (logs.length > 500) logs.splice(0, logs.length - 500);
       await setState({ logs });

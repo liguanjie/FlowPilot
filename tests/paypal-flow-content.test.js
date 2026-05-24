@@ -413,6 +413,24 @@ function createHostedPayPalHarness(options = {}) {
     id: 'btnNext',
     text: '下一页',
   });
+  const smsCodeInputs = Array.from({ length: 6 }, (_item, index) => createDomElement({
+    tagName: 'INPUT',
+    id: `securityCode${index + 1}`,
+    type: 'text',
+    name: `securityCode${index + 1}`,
+    attrs: {
+      maxlength: '1',
+      'aria-label': `Security code digit ${index + 1}`,
+    },
+  }));
+  smsCodeInputs.forEach((input) => {
+    input.maxLength = 1;
+  });
+  const smsVerifyButton = createDomElement({
+    tagName: 'BUTTON',
+    id: 'securityVerify',
+    text: 'Verify',
+  });
 
   function setElements(nextElements) {
     elements = nextElements;
@@ -462,6 +480,15 @@ function createHostedPayPalHarness(options = {}) {
     body.innerText = '请输入您的电子邮箱地址。 下一页 或 创建账户';
     body.textContent = body.innerText;
     setElements([emailInput, nextButton, createAccountButton]);
+  }
+
+  function showSmsCodeChallenge() {
+    location.href = 'https://www.paypal.com/checkoutweb/signup?token=EC-test';
+    location.host = 'www.paypal.com';
+    location.pathname = '/checkoutweb/signup';
+    body.innerText = 'Enter your code We sent a 6-digit code to (582) 262-9764 Resend';
+    body.textContent = body.innerText;
+    setElements([...smsCodeInputs, smsVerifyButton]);
   }
 
   const context = {
@@ -558,6 +585,8 @@ function createHostedPayPalHarness(options = {}) {
     showPayEmail,
     showCreateAccount,
     showGuestCheckout,
+    showSmsCodeChallenge,
+    smsCodeInputs,
   };
 }
 
@@ -685,5 +714,38 @@ test('PayPal hosted create account page is detected and handled as its own step'
   assert.deepEqual(
     JSON.parse(JSON.stringify(harness.events.filter((event) => event.type === 'operation').map((event) => event.metadata))),
     [{ stepKey: 'paypal-hosted-create-account', kind: 'click', label: 'hosted-paypal-create-account' }]
+  );
+});
+
+test('PayPal hosted SMS code challenge is detected and can be submitted', async () => {
+  const harness = createHostedPayPalHarness();
+  harness.showSmsCodeChallenge();
+
+  const state = await harness.send({
+    type: 'PAYPAL_HOSTED_GET_STATE',
+    source: 'test',
+    payload: {},
+  });
+  assert.equal(state.ok, true);
+  assert.equal(state.paypalSmsCodeVisible, true);
+  assert.equal(state.paypalSmsCodeInputCount, 6);
+  assert.equal(state.paypalSecurityChallengeVisible, false);
+
+  const result = await harness.send({
+    type: 'PAYPAL_HOSTED_SUBMIT_SECURITY_CODE',
+    source: 'test',
+    payload: { code: '407838' },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.submitted, true);
+  assert.deepEqual(harness.smsCodeInputs.map((input) => input.value), ['4', '0', '7', '8', '3', '8']);
+  assert.equal(harness.events.some((event) => event.type === 'click' && event.id === 'securityVerify'), true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(harness.events.filter((event) => event.type === 'operation').map((event) => event.metadata))),
+    [
+      { stepKey: 'paypal-hosted-card', kind: 'input', label: 'hosted-paypal-security-code' },
+      { stepKey: 'paypal-hosted-card', kind: 'click', label: 'hosted-paypal-security-code-submit' },
+    ]
   );
 });

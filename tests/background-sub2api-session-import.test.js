@@ -83,8 +83,17 @@ test('sub2api api imports current ChatGPT session through codex-session endpoint
       }
       if (parsed.pathname === '/api/v1/admin/accounts/import/codex-session') {
         const parsedContent = JSON.parse(body.content);
-        assert.equal(parsedContent.accessToken, 'access-token-from-state');
-        assert.equal(parsedContent.user?.email, 'flow@example.com');
+        assert.equal(parsedContent.type, 'sub2api-data');
+        assert.equal(parsedContent.version, 1);
+        assert.deepStrictEqual(parsedContent.proxies, []);
+        assert.equal(parsedContent.accounts.length, 1);
+        assert.equal(parsedContent.accounts[0].name, 'flow@example.com');
+        assert.equal(parsedContent.accounts[0].platform, 'openai');
+        assert.equal(parsedContent.accounts[0].type, 'oauth');
+        assert.equal(parsedContent.accounts[0].credentials.access_token, 'access-token-from-state');
+        assert.equal(parsedContent.accounts[0].credentials.email, 'flow@example.com');
+        assert.equal(parsedContent.accounts[0].credentials.expires_at, importExpiresAt);
+        assert.equal(parsedContent.accounts[0].expires_at, importExpiresAt);
         assert.equal(body.name, 'flow@example.com');
         assert.equal(body.priority, 3);
         assert.equal(body.proxy_id, 7);
@@ -252,6 +261,55 @@ test('sub2api session import falls back to registration email when session has n
 
   assert.ok(importBody, 'expected codex-session import call');
   assert.equal(importBody.name, 'registration@example.com');
+});
+
+test('sub2api session export payload matches openai-plus-vxt SUB2 file shape', () => {
+  const apiModule = loadSub2ApiApiModule();
+  const expiresAt = Math.floor(Date.parse('2026-05-20T12:34:56.000Z') / 1000);
+  const accessToken = createJwtToken({
+    email: 'jwt@example.com',
+    exp: expiresAt,
+    'https://api.openai.com/auth': {
+      chatgpt_account_id: 'acct_123',
+      chatgpt_user_id: 'user_456',
+      chatgpt_plan_type: 'plus',
+    },
+  });
+  const api = apiModule.createSub2ApiApi({
+    addLog: async () => {},
+    normalizeSub2ApiUrl: (value) => value,
+    DEFAULT_SUB2API_GROUP_NAME: 'codex',
+  });
+
+  const payload = api.buildSub2SessionExportPayload({
+    sub2apiAccountPriority: 4,
+  }, {
+    accessToken,
+    user: {
+      email: 'flow@example.com',
+    },
+    refreshToken: 'refresh-token-1',
+  }, accessToken);
+
+  assert.equal(payload.type, 'sub2api-data');
+  assert.equal(payload.version, 1);
+  assert.deepStrictEqual(payload.proxies, []);
+  assert.equal(payload.accounts.length, 1);
+  assert.equal(payload.accounts[0].name, 'flow@example.com');
+  assert.equal(payload.accounts[0].platform, 'openai');
+  assert.equal(payload.accounts[0].type, 'oauth');
+  assert.equal(payload.accounts[0].priority, 4);
+  assert.equal(payload.accounts[0].concurrency, 10);
+  assert.equal(payload.accounts[0].rate_multiplier, 1);
+  assert.equal(payload.accounts[0].auto_pause_on_expired, true);
+  assert.equal(payload.accounts[0].credentials.access_token, accessToken);
+  assert.equal(payload.accounts[0].credentials.refresh_token, 'refresh-token-1');
+  assert.equal(payload.accounts[0].credentials.email, 'flow@example.com');
+  assert.equal(payload.accounts[0].credentials.chatgpt_account_id, 'acct_123');
+  assert.equal(payload.accounts[0].credentials.chatgpt_user_id, 'user_456');
+  assert.equal(payload.accounts[0].credentials.plan_type, 'plus');
+  assert.equal(payload.accounts[0].credentials.expires_at, expiresAt);
+  assert.equal(payload.accounts[0].expires_at, expiresAt);
 });
 
 test('session import step reads current ChatGPT session and completes node', async () => {

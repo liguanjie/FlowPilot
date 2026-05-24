@@ -33,11 +33,11 @@
   const PAYPAL_HOSTED_STEP_CREATE_ACCOUNT = 'paypal-hosted-create-account';
   const PAYPAL_HOSTED_STEP_REVIEW = 'paypal-hosted-review';
   const PAYPAL_HOSTED_STEP_META = Object.freeze({
-    [PAYPAL_HOSTED_STEP_OPENAI_CHECKOUT]: { step: 6, label: '创建 PayPal 无卡直绑 Checkout' },
-    [PAYPAL_HOSTED_STEP_EMAIL]: { step: 7, label: '无卡直绑 PayPal 邮箱页' },
-    [PAYPAL_HOSTED_STEP_CARD]: { step: 8, label: '无卡直绑 PayPal 资料页' },
-    [PAYPAL_HOSTED_STEP_CREATE_ACCOUNT]: { step: 9, label: '无卡直绑 PayPal 创建确认页' },
-    [PAYPAL_HOSTED_STEP_REVIEW]: { step: 10, label: '无卡直绑 PayPal 授权复核页' },
+    [PAYPAL_HOSTED_STEP_OPENAI_CHECKOUT]: { fallbackStep: 8, label: '打开 PayPal 支付长链接' },
+    [PAYPAL_HOSTED_STEP_EMAIL]: { fallbackStep: 9, label: '无卡直绑 PayPal 邮箱页' },
+    [PAYPAL_HOSTED_STEP_CARD]: { fallbackStep: 10, label: '无卡直绑 PayPal 资料页' },
+    [PAYPAL_HOSTED_STEP_CREATE_ACCOUNT]: { fallbackStep: 11, label: '无卡直绑 PayPal 创建确认页' },
+    [PAYPAL_HOSTED_STEP_REVIEW]: { fallbackStep: 12, label: '无卡直绑 PayPal 授权复核页' },
   });
 
   function createPlusCheckoutCreateExecutor(deps = {}) {
@@ -50,6 +50,7 @@
       fetch: fetchImpl = null,
       getTabId = null,
       getState = null,
+      getStepIdByKeyForState = null,
       isTabAlive = null,
       queryTabsInAutomationWindow = null,
       registerTab,
@@ -63,19 +64,35 @@
 
     function addLog(message, level = 'info', options = {}) {
       return rawAddLog(message, level, {
-        step: 6,
+        step: getStepNumber('plus-checkout-create', options?.state),
         stepKey: 'plus-checkout-create',
         ...(options && typeof options === 'object' ? options : {}),
       });
     }
 
     function addHostedStepLog(stepKey, message, level = 'info', options = {}) {
-      const meta = PAYPAL_HOSTED_STEP_META[stepKey] || {};
       return rawAddLog(message, level, {
-        step: meta.step || 6,
+        step: getStepNumber(stepKey, options?.state),
         stepKey,
         ...(options && typeof options === 'object' ? options : {}),
       });
+    }
+
+    function getStepNumber(stepKey = '', state = {}) {
+      const normalizedStepKey = String(stepKey || '').trim();
+      if (normalizedStepKey && typeof getStepIdByKeyForState === 'function') {
+        const resolved = Math.floor(Number(getStepIdByKeyForState(normalizedStepKey, state || {})) || 0);
+        if (resolved > 0) {
+          return resolved;
+        }
+      }
+      if (normalizedStepKey === 'plus-checkout-create') {
+        return 7;
+      }
+      if (normalizedStepKey === 'plus-checkout-open') {
+        return 8;
+      }
+      return PAYPAL_HOSTED_STEP_META[normalizedStepKey]?.fallbackStep || 7;
     }
 
     function normalizePlusPaymentMethod(value = '') {
@@ -146,7 +163,7 @@
     }
 
     function getHostedStepNumber(stepKey = '') {
-      return PAYPAL_HOSTED_STEP_META[stepKey]?.step || 6;
+      return getStepNumber(stepKey);
     }
 
     function normalizeHostedPhoneForPayload(phone = '') {
@@ -497,6 +514,33 @@
       throw lastError || new Error('OpenAI Checkout 验证码轮询失败。');
     }
 
+    async function pollHostedPayPalSecurityCode(stepKey, verificationUrl = '') {
+      let lastError = null;
+      for (let attempt = 1; attempt <= HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS; attempt += 1) {
+        throwIfStopped();
+        try {
+          const code = await fetchHostedVerificationCode(verificationUrl);
+          await addHostedStepLog(
+            stepKey,
+            `步骤 ${getHostedStepNumber(stepKey)}：已获取 PayPal 直绑验证码（${attempt}/${HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS}）。`,
+            'info'
+          );
+          return code;
+        } catch (error) {
+          lastError = error;
+          await addHostedStepLog(
+            stepKey,
+            `步骤 ${getHostedStepNumber(stepKey)}：PayPal 直绑验证码暂不可用（${attempt}/${HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS}）：${error?.message || error}`,
+            'warn'
+          );
+          if (attempt < HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS) {
+            await sleepWithStop(HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_MS);
+          }
+        }
+      }
+      throw lastError || new Error('PayPal 直绑验证码轮询失败。');
+    }
+
     async function runHostedOpenAiCheckout(tabId, profile, config) {
       await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, tabId, {
         inject: PLUS_CHECKOUT_INJECT_FILES,
@@ -589,6 +633,42 @@
       return result || {};
     }
 
+    async function submitHostedPayPalSecurityCode(tabId, code) {
+      await waitForTabCompleteUntilStopped(tabId).catch(() => {});
+      await ensureContentScriptReadyOnTabUntilStopped(PAYPAL_SOURCE, tabId, {
+        inject: PAYPAL_INJECT_FILES,
+        injectSource: PAYPAL_SOURCE,
+        logMessage: '步骤 10：正在等待 PayPal 验证码页面脚本就绪...',
+      });
+      const result = await sendTabMessageUntilStopped(tabId, PAYPAL_SOURCE, {
+        type: 'PAYPAL_HOSTED_SUBMIT_SECURITY_CODE',
+        source: 'background',
+        payload: { code },
+      });
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      return result || {};
+    }
+
+    async function submitVisibleHostedPayPalSecurityCode(tabId, pageState, options = {}) {
+      if (!pageState?.paypalSmsCodeVisible) {
+        return '';
+      }
+      const stepKey = String(options.stepKey || '').trim();
+      const config = await getHostedCheckoutRuntimeConfig(options.state || {});
+      if (!config.verificationUrl) {
+        throw new Error(`步骤 ${getHostedStepNumber(stepKey)}：PayPal 要求短信验证码，但未配置直绑验证码接口。`);
+      }
+      const securityCode = await pollHostedPayPalSecurityCode(stepKey, config.verificationUrl);
+      if (!securityCode || securityCode === options.lastSubmittedSecurityCode) {
+        return '';
+      }
+      await addHostedStepLog(stepKey, `步骤 ${getHostedStepNumber(stepKey)}：正在提交 PayPal 直绑验证码。`, 'info');
+      await submitHostedPayPalSecurityCode(tabId, securityCode);
+      return securityCode;
+    }
+
     function getHostedStageOrder(stage = '') {
       switch (stage) {
         case PAYPAL_HOSTED_STAGE_LOGIN:
@@ -616,8 +696,12 @@
       const timeoutMs = Math.max(1000, Number(options.timeoutMs) || HOSTED_CHECKOUT_TRANSITION_TIMEOUT_MS);
       const intervalMs = Math.max(100, Number(options.intervalMs) || 500);
       const label = String(options.label || 'PayPal 无卡直绑页面').trim();
+      const stepKey = String(options.stepKey || '').trim();
+      const handleSecurityCode = Boolean(options.handleSecurityCode);
       const deadline = Date.now() + timeoutMs;
       let lastStage = '';
+      let lastSubmittedSecurityCode = '';
+      let loggedSecurityChallenge = false;
       while (Date.now() < deadline) {
         throwIfStopped();
         const currentUrl = await getHostedCurrentUrl(tabId);
@@ -636,6 +720,42 @@
           lastStage = pageState?.hostedStage || lastStage;
           if (predicate(pageState)) {
             return pageState;
+          }
+          if (handleSecurityCode && pageState?.paypalSmsCodeVisible) {
+            const submittedSecurityCode = await submitVisibleHostedPayPalSecurityCode(tabId, pageState, {
+              stepKey,
+              state: options.state || {},
+              lastSubmittedSecurityCode,
+            });
+            if (submittedSecurityCode) {
+              lastSubmittedSecurityCode = submittedSecurityCode;
+              await sleepWithStop(1000);
+              continue;
+            }
+            const config = await getHostedCheckoutRuntimeConfig(options.state || {});
+            if (!config.verificationUrl) {
+              throw new Error(`步骤 ${getHostedStepNumber(stepKey)}：PayPal 要求短信验证码，但未配置直绑验证码接口。`);
+            }
+            const securityCode = await pollHostedPayPalSecurityCode(stepKey, config.verificationUrl);
+            if (securityCode && securityCode !== lastSubmittedSecurityCode) {
+              lastSubmittedSecurityCode = securityCode;
+              await addHostedStepLog(stepKey, `步骤 ${getHostedStepNumber(stepKey)}：正在提交 PayPal 直绑验证码。`, 'info');
+              await submitHostedPayPalSecurityCode(tabId, securityCode);
+              await sleepWithStop(1000);
+              continue;
+            }
+            lastStage = 'paypal_sms_code_waiting_new_code';
+          }
+          if (pageState?.paypalSecurityChallengeVisible) {
+            lastStage = 'paypal_security_challenge';
+            if (stepKey && !loggedSecurityChallenge) {
+              loggedSecurityChallenge = true;
+              await addHostedStepLog(
+                stepKey,
+                `步骤 ${getHostedStepNumber(stepKey)}：PayPal 出现 Security Challenge，请先人工完成 reCAPTCHA；完成后流程会继续检测短信验证码或下一页。`,
+                'warn'
+              );
+            }
           }
         } catch (error) {
           lastStage = error?.message || lastStage;
@@ -943,6 +1063,24 @@
       }
 
       const pageState = await getHostedPayPalState(tabId);
+      if (pageState?.paypalSmsCodeVisible) {
+        await submitVisibleHostedPayPalSecurityCode(tabId, pageState, { stepKey, state });
+        const nextState = await waitForHostedPayPalStage(
+          tabId,
+          (stateInfo) => stateInfo?.hostedStage && stateInfo.hostedStage !== PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT,
+          {
+            label: `步骤 ${stepNumber}：等待 PayPal 资料页跳转`,
+            stepKey,
+            state,
+            handleSecurityCode: true,
+            timeoutMs: HOSTED_CHECKOUT_PAYPAL_TIMEOUT_MS,
+          }
+        );
+        await completeHostedStep(stepKey, tabId, {
+          plusHostedCheckoutLastStage: nextState.hostedStage || '',
+        });
+        return;
+      }
       if (isHostedStageAtOrAfter(pageState.hostedStage, PAYPAL_HOSTED_STAGE_CREATE_ACCOUNT)
         && pageState.hostedStage !== PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT) {
         await addHostedStepLog(stepKey, `步骤 ${stepNumber}：当前 PayPal 已进入后续页面（${pageState.hostedStage}），资料节点直接完成。`, 'info');
@@ -972,7 +1110,13 @@
       const nextState = await waitForHostedPayPalStage(
         tabId,
         (stateInfo) => stateInfo?.hostedStage && stateInfo.hostedStage !== PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT,
-        { label: `步骤 ${stepNumber}：等待 PayPal 资料页跳转` }
+        {
+          label: `步骤 ${stepNumber}：等待 PayPal 资料页跳转`,
+          stepKey,
+          state,
+          handleSecurityCode: true,
+          timeoutMs: HOSTED_CHECKOUT_PAYPAL_TIMEOUT_MS,
+        }
       );
       await completeHostedStep(stepKey, tabId, {
         plusHostedCheckoutLastStage: nextState.hostedStage || '',
@@ -1015,7 +1159,13 @@
       const nextState = await waitForHostedPayPalStage(
         tabId,
         (stateInfo) => stateInfo?.hostedStage && stateInfo.hostedStage !== PAYPAL_HOSTED_STAGE_CREATE_ACCOUNT,
-        { label: `步骤 ${stepNumber}：等待 PayPal 创建确认页跳转` }
+        {
+          label: `步骤 ${stepNumber}：等待 PayPal 创建确认页跳转`,
+          stepKey,
+          state,
+          handleSecurityCode: true,
+          timeoutMs: HOSTED_CHECKOUT_PAYPAL_TIMEOUT_MS,
+        }
       );
       await completeHostedStep(stepKey, tabId, {
         plusHostedCheckoutLastStage: nextState.hostedStage || '',
