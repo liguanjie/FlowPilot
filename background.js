@@ -12272,16 +12272,19 @@ async function executeNodeAndWait(nodeId, delayAfter = 2000) {
     const signupTabId = await getTabId('openai-auth');
     if (signupTabId) {
       await addLog('自动运行：填写资料节点已收到完成信号，正在等待当前页面完成加载并稳定...', 'info');
-      await waitForTabStableComplete(signupTabId, {
-        timeoutMs: 120000,
-        retryDelayMs: 300,
-        stableMs: 1000,
-        initialDelayMs: 800,
-      });
+      const currentTab = await chrome.tabs.get(signupTabId).catch(() => null);
+      const currentUrl = String(currentTab?.url || completionPayload?.url || '').trim();
+      if (!(currentUrl && isStep5CompletionChatgptUrl(currentUrl))) {
+        await waitForTabStableComplete(signupTabId, {
+          timeoutMs: 120000,
+          retryDelayMs: 300,
+          stableMs: 1000,
+          initialDelayMs: 800,
+        });
+      }
       try {
         await validateStep5PostCompletion(signupTabId, completionPayload || {});
-        await setNodeStatus(normalizedNodeId, 'completed');
-        await addLog('已完成', 'ok', { nodeId: normalizedNodeId });
+        await completeNodeFromBackground(normalizedNodeId, completionPayload || {});
         await addLog('步骤 5 [调试] 资料页完成信号已通过后台复核。', 'ok', {
           step: 5,
           stepKey: 'fill-profile',
@@ -14698,15 +14701,18 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
     if (!signupTabId) {
       throw new Error('步骤 5：缺少认证页标签页，无法确认是否已跳转到 https://chatgpt.com。');
     }
-    await waitForTabStableComplete(signupTabId, {
-      timeoutMs: 120000,
-      retryDelayMs: 300,
-      stableMs: 1000,
-      initialDelayMs: 800,
-    });
+    const currentTab = await chrome.tabs.get(signupTabId).catch(() => null);
+    const currentUrl = String(currentTab?.url || completionPayload?.url || '').trim();
+    if (!(currentUrl && isStep5CompletionChatgptUrl(currentUrl))) {
+      await waitForTabStableComplete(signupTabId, {
+        timeoutMs: 120000,
+        retryDelayMs: 300,
+        stableMs: 1000,
+        initialDelayMs: 800,
+      });
+    }
     await validateStep5PostCompletion(signupTabId, completionPayload || {});
-    await setNodeStatus('fill-profile', 'completed');
-    await addLog('已完成', 'ok', { nodeId: 'fill-profile' });
+    await completeNodeFromBackground('fill-profile', completionPayload || {});
   },
   finalizeIcloudAliasAfterSuccessfulFlow,
   findHotmailAccount,
@@ -15609,12 +15615,31 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
   while (true) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     const currentUrl = String(tab?.url || completionPayload?.url || '').trim();
-    const pageState = await getStep5SubmitStateFromContent({
-      timeoutMs: 15000,
-      responseTimeoutMs: 15000,
-      retryDelayMs: 500,
-      logMessage: '步骤 5：资料提交已触发页面跳转，正在确认最终页面状态...',
-    });
+    let pageState = null;
+    try {
+      pageState = await getStep5SubmitStateFromContent({
+        timeoutMs: 15000,
+        responseTimeoutMs: 15000,
+        retryDelayMs: 500,
+        logMessage: '步骤 5：资料提交已触发页面跳转，正在确认最终页面状态...',
+      });
+    } catch (stateError) {
+      if (currentUrl && isStep5CompletionChatgptUrl(currentUrl)) {
+        await debugLog('后台复核读取页面状态失败，但标签页已进入 chatgpt.com，按注册成功继续。', {
+          completionOutcome: String(completionPayload?.outcome || '').trim(),
+          completionUrl: String(completionPayload?.url || '').trim(),
+          navigationStarted: Boolean(completionPayload?.navigationStarted),
+          tabUrl: currentUrl,
+          level: 'warn',
+        });
+        return {
+          successState: 'logged_in_home',
+          url: currentUrl,
+          stateReadFallback: true,
+        };
+      }
+      throw stateError;
+    }
     await debugLog('后台复核当前页面状态。', {
       completionOutcome: String(completionPayload?.outcome || '').trim(),
       completionUrl: String(completionPayload?.url || '').trim(),

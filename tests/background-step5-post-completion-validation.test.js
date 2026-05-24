@@ -372,3 +372,65 @@ return {
     true
   );
 });
+
+test('step 5 post-completion validation accepts chatgpt url when state read fails', async () => {
+  const api = new Function(`
+const logs = [];
+const messages = [];
+
+const chrome = {
+  tabs: {
+    async get() {
+      return { url: 'https://chatgpt.com/' };
+    },
+  },
+};
+
+async function sendToContentScriptResilient(source, message) {
+  messages.push({ source, type: message.type });
+  if (message.type === 'GET_STEP5_SUBMIT_STATE') {
+    throw new Error('content script disconnected');
+  }
+  throw new Error('unexpected message type: ' + message.type);
+}
+
+async function addLog(message, level, meta) {
+  logs.push({ message, level, meta });
+}
+
+async function waitForTabStableComplete() {}
+
+${extractFunction('parseUrlSafely')}
+${extractFunction('isSignupEntryHost')}
+${extractFunction('isLikelyLoggedInChatgptHomeUrl')}
+${extractFunction('isStep5CompletionChatgptUrl')}
+${extractFunction('getStep5SubmitStateFromContent')}
+${extractFunction('recoverStep5SubmitRetryPageOnTab')}
+${extractFunction('completeStep5ChatgptOnboardingOnTab')}
+${extractFunction('isStep5ChatgptOnboardingState')}
+${extractFunction('validateStep5PostCompletion')}
+
+return {
+  async run() {
+    return validateStep5PostCompletion(99, { navigationStarted: true });
+  },
+  snapshot() {
+    return { logs, messages };
+  },
+};
+`)();
+
+  const result = await api.run();
+  const snapshot = api.snapshot();
+
+  assert.equal(result.successState, 'logged_in_home');
+  assert.equal(result.stateReadFallback, true);
+  assert.deepStrictEqual(
+    snapshot.messages.map(({ type }) => type),
+    ['GET_STEP5_SUBMIT_STATE']
+  );
+  assert.equal(
+    snapshot.logs.some(({ message }) => /读取页面状态失败.*chatgpt\.com|璇诲彇椤甸潰鐘舵€佸け璐?.*chatgpt\.com/.test(message)),
+    true
+  );
+});
